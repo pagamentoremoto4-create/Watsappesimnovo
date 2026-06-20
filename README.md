@@ -72,3 +72,13 @@ Troque depois pelo painel.
 ```txt
 https://SEU-SERVICO.onrender.com/webhook/pixgo
 ```
+
+## Correção importante no Render
+
+Adicione esta variável em **Environment**:
+
+```txt
+NODE_VERSION=20.20.2
+```
+
+Isso evita erro de compilação do better-sqlite3 no Node 26.

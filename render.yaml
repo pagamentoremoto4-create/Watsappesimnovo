@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: whatsapp-esim-centralunlocker
+    env: node
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 20.20.2
+      - key: NPM_CONFIG_ENGINE_STRICT
+        value: false
