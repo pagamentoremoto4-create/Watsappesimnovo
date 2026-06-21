@@ -11,6 +11,7 @@ const QRCode = require('qrcode');
 const pino = require('pino');
 const Database = require('better-sqlite3');
 const { v4: uuidv4 } = require('uuid');
+const { execFileSync } = require('child_process');
 const {
   default: makeWASocket,
   useMultiFileAuthState,
@@ -34,6 +35,9 @@ const ADMIN_NUMBERS = String(process.env.ADMIN_NUMBERS || '').split(',').map(onl
 const SUPORTE_WHATSAPP = onlyDigits(process.env.SUPORTE_WHATSAPP || ADMIN_NUMBERS[0] || '');
 const ESTOQUE_BAIXO = Number(process.env.ESTOQUE_BAIXO || 2);
 const PRAZO_MANUAL = process.env.PRAZO_MANUAL || 'até 30 minutos';
+const MENU_IMAGE_URL = process.env.MENU_IMAGE_URL || '';
+const BACKUP_INTERVAL_HOURS = Number(process.env.BACKUP_INTERVAL_HOURS || 6);
+const BACKUP_KEEP = Number(process.env.BACKUP_KEEP || 30);
 
 for (const dir of [DATA_DIR, UPLOAD_DIR, AUTH_DIR, BACKUP_DIR]) fs.mkdirSync(dir, { recursive: true });
 
@@ -141,6 +145,64 @@ async function sendText(to, text) { if (!sock) return false; try { await sock.se
 async function sendImage(to, filePath, caption='') { if (!sock || !fs.existsSync(filePath)) return false; try { await sock.sendMessage(to, { image: fs.readFileSync(filePath), caption }); return true; } catch(e) { console.log('Erro enviar imagem:', e.message); return false; } }
 async function notifyAdmins(text) { for (const n of ADMIN_NUMBERS) await sendText(phoneToJid(n), text); }
 
+function limparBackupsAntigos() {
+  try {
+    const files = fs.readdirSync(BACKUP_DIR)
+      .filter(f => f.endsWith('.db') || f.endsWith('.tar.gz'))
+      .map(f => ({ f, t: fs.statSync(path.join(BACKUP_DIR, f)).mtimeMs }))
+      .sort((a,b) => b.t - a.t);
+    for (const old of files.slice(BACKUP_KEEP)) {
+      try { fs.unlinkSync(path.join(BACKUP_DIR, old.f)); } catch(e) {}
+    }
+  } catch(e) { console.log('Erro limpar backups:', e.message); }
+}
+function criarBackupDB(prefix='backup_auto') {
+  fs.mkdirSync(BACKUP_DIR, { recursive: true });
+  const f = `${prefix}_${new Date().toISOString().replace(/[:.]/g,'-')}.db`;
+  db.pragma('wal_checkpoint(FULL)');
+  fs.copyFileSync(DB_PATH, path.join(BACKUP_DIR, f));
+  limparBackupsAntigos();
+  return f;
+}
+function criarBackupCompleto(prefix='backup_completo') {
+  fs.mkdirSync(BACKUP_DIR, { recursive: true });
+  const nome = `${prefix}_${new Date().toISOString().replace(/[:.]/g,'-')}.tar.gz`;
+  const destino = path.join(BACKUP_DIR, nome);
+  db.pragma('wal_checkpoint(FULL)');
+  try {
+    execFileSync('tar', ['-czf', destino, '-C', DATA_DIR, path.basename(DB_PATH), path.basename(UPLOAD_DIR)], { stdio: 'ignore' });
+  } catch(e) {
+    // Se o tar não estiver disponível, garante ao menos backup do banco.
+    return criarBackupDB(prefix);
+  }
+  limparBackupsAntigos();
+  return nome;
+}
+function iniciarBackupAutomatico() {
+  setTimeout(async () => {
+    try {
+      const f = criarBackupCompleto('backup_auto');
+      console.log('BACKUP AUTOMATICO:', f);
+      if (ADMIN_NUMBERS.length) await notifyAdmins(`💾 Backup automático criado com sucesso.\nArquivo: ${f}`);
+    } catch(e) { console.log('Erro backup automático:', e.message); }
+  }, 60000);
+  setInterval(async () => {
+    try {
+      const f = criarBackupCompleto('backup_auto');
+      console.log('BACKUP AUTOMATICO:', f);
+      if (ADMIN_NUMBERS.length) await notifyAdmins(`💾 Backup automático criado com sucesso.\nArquivo: ${f}`);
+    } catch(e) { console.log('Erro backup automático:', e.message); }
+  }, Math.max(1, BACKUP_INTERVAL_HOURS) * 60 * 60 * 1000);
+}
+async function sendMenu(to, cliente) {
+  const texto = menuPrincipal(cliente);
+  if (MENU_IMAGE_URL) {
+    try { await sock.sendMessage(to, { image: { url: MENU_IMAGE_URL }, caption: texto }); return true; }
+    catch(e) { console.log('Erro enviar imagem menu:', e.message); }
+  }
+  return sendText(to, texto);
+}
+
 function upsertClient(phone, nome, jid) {
   const p = normalizePhone(phone);
   db.prepare(`INSERT INTO clientes(telefone,nome,jid) VALUES(?,?,?) ON CONFLICT(telefone) DO UPDATE SET nome=excluded.nome,jid=excluded.jid`).run(p, nome || 'Cliente', jid || phoneToJid(p));
@@ -237,7 +299,7 @@ async function tratarMensagem(msg) {
   const cliente = upsertClient(phone, msg.pushName || 'Cliente', jid);
   const state = userState.get(jid);
   const lower = text.toLowerCase();
-  if (['menu','oi','olá','ola','start','inicio','início','cancelar'].includes(lower)) { userState.delete(jid); return sendText(jid, menuPrincipal(cliente)); }
+  if (['menu','oi','olá','ola','start','inicio','início','cancelar'].includes(lower)) { userState.delete(jid); return sendMenu(jid, cliente); }
   if (lower === '1' && !state) { userState.set(jid, { step: 'planos' }); return sendText(jid, listaPlanos()); }
   if (lower === '2' && !state) {
     const ps = db.prepare('SELECT * FROM pedidos WHERE cliente_id=? ORDER BY id DESC LIMIT 10').all(cliente.id);
@@ -245,6 +307,35 @@ async function tratarMensagem(msg) {
     return sendText(jid, '📦 *Meus pedidos*\n\n' + ps.map(p => `#${p.id} - ${p.produto_nome}\n${brl(p.valor)} - ${p.status}`).join('\n\n'));
   }
   if (lower === '3' && !state) return sendText(jid, `🆘 Suporte Centralunlocker\n\nFale com: https://wa.me/${SUPORTE_WHATSAPP}`);
+  if (lower === '4' && !state) {
+    userState.set(jid, { step: 'depositar_saldo' });
+    return sendText(jid, '💳 *Depositar saldo*\n\nDigite o valor que deseja adicionar.\nExemplo: *20*\n\nDigite *menu* para cancelar.');
+  }
+  if (lower === '5' && !state) {
+    const c = db.prepare('SELECT * FROM clientes WHERE id=?').get(cliente.id);
+    return sendText(jid, `💰 *Meu saldo*\n\nSaldo atual: *${brl(c?.saldo || 0)}*`);
+  }
+  if (state?.step === 'depositar_saldo') {
+    const valor = Number(text.replace(',', '.').replace(/[^0-9.]/g, ''));
+    if (!valor || valor < 1) return sendText(jid, '❌ Valor inválido. Digite apenas números. Exemplo: *20*');
+    const external_ref = String(Date.now()) + '_' + uuidv4();
+    const info = db.prepare(`INSERT INTO pedidos(external_ref,cliente_id,cliente_nome,cliente_telefone,cliente_jid,produto_id,produto_nome,valor,status,tipo_pagamento) VALUES(?,?,?,?,?,?,?,?,?,?)`)
+      .run(external_ref, cliente.id, cliente.nome, cliente.telefone, jid, null, 'Depósito de saldo', valor, 'PENDENTE', 'deposito_saldo');
+    const pedido = db.prepare('SELECT * FROM pedidos WHERE id=?').get(info.lastInsertRowid);
+    userState.delete(jid);
+    await sendText(jid, `💰 Gerando PIX de depósito...\n\nValor: ${brl(valor)}`);
+    try {
+      const copia = await createPix(pedido, { nome: 'Depósito de saldo' });
+      await sendText(jid, `✅ *PIX DE DEPÓSITO GERADO*\n\n📦 Pedido #${pedido.id}\n💰 Valor: ${brl(valor)}\n\n📋 O código PIX será enviado na próxima mensagem.`);
+      await sendText(jid, `${copia}`);
+      await notifyAdmins(`💳 *DEPÓSITO DE SALDO INICIADO*\n\nPedido: #${pedido.id}\nCliente: ${cliente.telefone}\nValor: ${brl(valor)}`);
+    } catch(e) {
+      console.log('ERRO PIXGO DEPÓSITO:', e.response?.data || e.responseData || e.message);
+      db.prepare('UPDATE pedidos SET status=? WHERE id=?').run('ERRO_PIX', pedido.id);
+      await sendText(jid, `❌ Erro ao gerar PIX de depósito.\n\nMotivo: ${e.message}`);
+    }
+    return;
+  }
 
   if (state?.step === 'planos') {
     const produto = getProdutoByChoice(text);
@@ -307,7 +398,7 @@ async function tratarMensagem(msg) {
     }
     return;
   }
-  return sendText(jid, menuPrincipal(cliente));
+  return sendMenu(jid, cliente);
 }
 
 async function startWhatsApp() {
@@ -332,7 +423,7 @@ async function startWhatsApp() {
 function page(title, body) {
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${safe(title)}</title><style>
   body{margin:0;background:#07111f;color:#eaf0f8;font-family:Arial,sans-serif}.layout{display:grid;grid-template-columns:250px 1fr;min-height:100vh}.side{background:#09101f;padding:18px;border-right:1px solid #24324b}.brand{font-weight:900;font-size:21px;margin-bottom:20px}.side a{display:block;color:#dbeafe;text-decoration:none;padding:11px;border-radius:12px;margin:5px 0}.side a:hover{background:#13223a}.main{padding:22px}.card{background:#101b31;border:1px solid #24324b;border-radius:18px;padding:16px;margin:14px 0;box-shadow:0 14px 35px rgba(0,0,0,.25)}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.metric h1{margin:0;font-size:30px}.metric p{color:#97a6ba}input,select,textarea{width:100%;padding:11px;border-radius:12px;border:1px solid #334155;background:#08111f;color:white;margin:6px 0 12px}.btn,button{background:#2563eb;color:white;border:0;border-radius:11px;padding:9px 13px;text-decoration:none;font-weight:bold;display:inline-block;margin:2px;cursor:pointer}.green{background:#16a34a}.red{background:#dc2626}.orange{background:#ea580c}.muted{color:#97a6ba}table{width:100%;border-collapse:collapse;background:#08111f;border-radius:14px;overflow:hidden}td,th{padding:10px;border-bottom:1px solid #24324b;text-align:left}th{background:#13223a}.pill{padding:5px 9px;border-radius:999px;background:#1e40af;font-weight:bold}@media(max-width:800px){.layout{grid-template-columns:1fr}.side{position:relative}.main{padding:14px}}
-  </style></head><body><div class="layout"><div class="side"><div class="brand">📱 Centralunlocker</div><a href="/admin">📊 Dashboard</a><a href="/admin/produtos">📦 Produtos</a><a href="/admin/estoque">📥 Estoque QR</a><a href="/admin/pedidos">📋 Pedidos</a><a href="/admin/pedidos?status=AGUARDANDO_ENVIO">🟡 Pedidos Manuais</a><a href="/admin/clientes">👥 Clientes</a><a href="/admin/mensagem">📢 Mensagem</a><a href="/admin/backup">💾 Backup</a><a href="/qr">🔳 QR WhatsApp</a><a href="/admin/senha">🔐 Alterar senha</a><a href="/admin/logout">🚪 Sair</a></div><div class="main">${body}</div></div></body></html>`;
+  </style></head><body><div class="layout"><div class="side"><div class="brand">📱 Centralunlocker</div><a href="/admin">📊 Dashboard</a><a href="/admin/produtos">📦 Produtos</a><a href="/admin/estoque">📥 Estoque QR</a><a href="/admin/pedidos">📋 Pedidos</a><a href="/admin/pedidos?status=AGUARDANDO_ENVIO">🟡 Pedidos Manuais</a><a href="/admin/clientes">👥 Clientes</a><a href="/admin/mensagem">📢 Mensagem</a><a href="/admin/backup">💾 Backup</a><a href="/admin/financeiro">💵 Financeiro</a><a href="/qr">🔳 QR WhatsApp</a><a href="/admin/senha">🔐 Alterar senha</a><a href="/admin/logout">🚪 Sair</a></div><div class="main">${body}</div></div></body></html>`;
 }
 
 app.get('/', (req,res)=>res.redirect('/admin'));
@@ -366,8 +457,18 @@ app.get('/admin/mensagem',auth,(req,res)=>res.send(page('Mensagem',`<h1>📢 Men
 app.post('/admin/mensagem',auth,async(req,res)=>{ const texto=String(req.body.texto||'').trim(); if(texto){ const cs=db.prepare('SELECT * FROM clientes').all(); let ok=0; for(const c of cs){ if(await sendText(c.jid||phoneToJid(c.telefone), texto)) ok++; } db.prepare('INSERT INTO mensagens_salvas(texto,total) VALUES(?,?)').run(texto,ok); } res.redirect('/admin/mensagem'); });
 app.get('/admin/senha',auth,(req,res)=>res.send(page('Senha',`<h1>🔐 Alterar senha</h1><div class="card"><form method="post"><input name="nova" type="password" placeholder="Nova senha"><button>Salvar</button></form></div>`)));
 app.post('/admin/senha',auth,(req,res)=>{ if(req.body.nova) setConfig('admin_hash',bcrypt.hashSync(req.body.nova,10)); res.redirect('/admin'); });
-app.get('/admin/backup',auth,(req,res)=>{ const files=fs.readdirSync(BACKUP_DIR).filter(f=>f.endsWith('.db')).sort().reverse(); const rows=files.map(f=>`<tr><td>${safe(f)}</td><td><a class="btn" href="/admin/backup/download/${encodeURIComponent(f)}">Baixar</a></td></tr>`).join(''); res.send(page('Backup',`<h1>💾 Backup</h1><div class="card"><form method="post" action="/admin/backup"><button class="green">Criar backup agora</button></form></div><table><tr><th>Arquivo</th><th>Ação</th></tr>${rows}</table>`)); });
-app.post('/admin/backup',auth,(req,res)=>{ const f=`backup_esim_${new Date().toISOString().replace(/[:.]/g,'-')}.db`; db.pragma('wal_checkpoint(FULL)'); fs.copyFileSync(DB_PATH,path.join(BACKUP_DIR,f)); res.redirect('/admin/backup'); });
+
+app.get('/admin/financeiro',auth,(req,res)=>{
+  const hoje = db.prepare("SELECT COALESCE(SUM(valor),0) s FROM pedidos WHERE date(pago_em)=date('now','localtime') AND status IN ('PAGO','ENTREGUE','AGUARDANDO_ENVIO') AND tipo_pagamento!='deposito_saldo'").get().s;
+  const mes = db.prepare("SELECT COALESCE(SUM(valor),0) s FROM pedidos WHERE strftime('%Y-%m', pago_em)=strftime('%Y-%m','now','localtime') AND status IN ('PAGO','ENTREGUE','AGUARDANDO_ENVIO') AND tipo_pagamento!='deposito_saldo'").get().s;
+  const depositos = db.prepare("SELECT COALESCE(SUM(valor),0) s FROM pedidos WHERE status='PAGO' AND tipo_pagamento='deposito_saldo'").get().s;
+  const saldoClientes = db.prepare("SELECT COALESCE(SUM(saldo),0) s FROM clientes").get().s;
+  const rows = db.prepare("SELECT * FROM pedidos ORDER BY id DESC LIMIT 20").all().map(p=>`<tr><td>#${p.id}</td><td>${safe(p.cliente_telefone||'-')}</td><td>${safe(p.produto_nome||'-')}</td><td>${brl(p.valor)}</td><td>${safe(p.tipo_pagamento||'')}</td><td>${safe(p.status||'')}</td></tr>`).join('');
+  res.send(page('Financeiro', `<h1>💵 Financeiro</h1><div class="grid"><div class="card metric"><p>Vendas hoje</p><h1>${brl(hoje)}</h1></div><div class="card metric"><p>Vendas no mês</p><h1>${brl(mes)}</h1></div><div class="card metric"><p>Depósitos aprovados</p><h1>${brl(depositos)}</h1></div><div class="card metric"><p>Saldo em clientes</p><h1>${brl(saldoClientes)}</h1></div></div><div class="card"><h2>Últimos pedidos</h2><table><tr><th>ID</th><th>Cliente</th><th>Produto</th><th>Valor</th><th>Tipo</th><th>Status</th></tr>${rows}</table></div>`));
+});
+
+app.get('/admin/backup',auth,(req,res)=>{ const files=fs.readdirSync(BACKUP_DIR).filter(f=>f.endsWith('.db') || f.endsWith('.tar.gz')).sort().reverse(); const rows=files.map(f=>`<tr><td>${safe(f)}</td><td><a class="btn" href="/admin/backup/download/${encodeURIComponent(f)}">Baixar</a></td></tr>`).join(''); res.send(page('Backup',`<h1>💾 Backup</h1><div class="card"><p class="muted">Backup completo inclui banco de dados e imagens dos QR Codes. O sistema também cria backup automático a cada ${BACKUP_INTERVAL_HOURS} horas.</p><form method="post" action="/admin/backup"><button class="green">Criar backup completo agora</button></form></div><table><tr><th>Arquivo</th><th>Ação</th></tr>${rows}</table>`)); });
+app.post('/admin/backup',auth,(req,res)=>{ criarBackupCompleto('backup_manual'); res.redirect('/admin/backup'); });
 app.get('/admin/backup/download/:file',auth,(req,res)=>{ const f=path.basename(req.params.file); res.download(path.join(BACKUP_DIR,f)); });
 app.post('/admin/reset-whatsapp',auth,(req,res)=>{ fs.rmSync(AUTH_DIR,{recursive:true,force:true}); fs.mkdirSync(AUTH_DIR,{recursive:true}); res.send(page('Reset','<div class="card">Sessão apagada. Reinicie o serviço e abra /qr.</div>')); });
 
@@ -393,6 +494,14 @@ app.post('/webhook/pixgo', async (req,res)=>{
     if (!p) return res.status(200).json({success:true,ignored:'pedido_not_found', ref:String(ref)});
 
     if (isPaidStatus(status) && !['PAGO','ENTREGUE','AGUARDANDO_ENVIO'].includes(p.status)) {
+      if (p.tipo_pagamento === 'deposito_saldo') {
+        db.prepare('UPDATE pedidos SET status=?, pago_em=CURRENT_TIMESTAMP WHERE id=?').run('PAGO', p.id);
+        db.prepare('UPDATE clientes SET saldo = saldo + ? WHERE id=?').run(Number(p.valor || 0), p.cliente_id);
+        const c = db.prepare('SELECT * FROM clientes WHERE id=?').get(p.cliente_id);
+        await sendText(p.cliente_jid || phoneToJid(p.cliente_telefone), `✅ Depósito confirmado!\n\n💰 Valor adicionado: *${brl(p.valor)}*\n💵 Saldo atual: *${brl(c?.saldo || 0)}*`);
+        await notifyAdmins(`💳 *DEPÓSITO APROVADO*\n\nPedido: #${p.id}\nCliente: ${p.cliente_telefone}\nValor: ${brl(p.valor)}\nSaldo atual: ${brl(c?.saldo || 0)}`);
+        return res.status(200).json({success:true,deposito:true});
+      }
       db.prepare('UPDATE pedidos SET status=?, pago_em=CURRENT_TIMESTAMP WHERE id=?').run('PAGO', p.id);
       await sendText(p.cliente_jid || phoneToJid(p.cliente_telefone), `✅ Pagamento confirmado!\n\n📦 Pedido #${p.id}\n📱 ${p.produto_nome}\n\nPreparando entrega...`);
       await notifyAdmins(`💰 *PAGAMENTO APROVADO*\n\nPedido: #${p.id}\nCliente: ${p.cliente_telefone}\nPlano: ${p.produto_nome}\nValor: ${brl(p.valor)}`);
@@ -406,5 +515,6 @@ app.post('/webhook/pixgo', async (req,res)=>{
 });
 
 initDB();
+iniciarBackupAutomatico();
 startWhatsApp().catch(e=>console.log('Erro iniciar WhatsApp:', e.message));
 app.listen(PORT,()=>console.log(`Servidor online na porta ${PORT}`));

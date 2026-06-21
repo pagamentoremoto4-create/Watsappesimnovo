@@ -1,23 +1,53 @@
-# WhatsApp eSIM - Correção pagamento e saldo
+# WhatsApp eSIM Centralunlocker - versão completa
 
-Correções desta versão:
+Inclui:
+- PIX PixGo funcionando com copia e cola separado
+- Compra com saldo
+- Depósito de saldo via PIX
+- Entrega automática por estoque QR
+- Entrega manual quando estoque zerar
+- Painel admin
+- Painel financeiro
+- Mensagem em massa
+- Backup manual completo
+- Backup automático a cada 6 horas
+- Menu com imagem/banner via `MENU_IMAGE_URL`
 
-- Webhook PixGo confirma `payment.completed`, `payment.paid` e `payment.approved`.
-- Status SQL corrigidos com parâmetros para evitar erro `no such column`.
-- Compra com saldo entrega pelo painel sem erro 502.
-- PIX copia e cola continua em mensagem separada.
-
-Variáveis Render:
+## Variáveis Render
 
 ```txt
 NODE_VERSION=20.20.2
 BASE_URL=https://watsappesimnovo.onrender.com
-PIXGO_API_KEY=sua_chave
+PIXGO_API_KEY=sua_chave_pixgo
 PIXGO_URL=https://pixgo.org/api/v1/payment/create
+ADMIN_NUMBERS=55SEUNUMERO
+ADMIN_USER=admin
+ADMIN_PASS=123456
+DATA_DIR=/data
+BACKUP_INTERVAL_HOURS=6
+BACKUP_KEEP=30
+MENU_IMAGE_URL=https://link-da-sua-imagem.png
+SUPORTE_WHATSAPP=55SEUNUMERO
 ```
 
-Webhook PixGo:
+## Importante
+Crie um Persistent Disk no Render com mount path:
 
 ```txt
-https://watsappesimnovo.onrender.com/webhook/pixgo
+/data
 ```
+
+Assim o banco, QR Codes, sessão do WhatsApp e backups ficam salvos.
+
+## Backup
+No painel acesse:
+
+```txt
+/admin/backup
+```
+
+O backup completo salva:
+- banco `esim.db`
+- pasta de QR Codes `uploads_esim`
+
+Também cria backup automático conforme `BACKUP_INTERVAL_HOURS`.
