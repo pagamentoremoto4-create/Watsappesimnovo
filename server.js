@@ -75,35 +75,29 @@ function safe(s) { return String(s ?? '').replace(/[&<>'"]/g, m => ({'&':'&amp;'
 function phoneToJid(phone) { const n = normalizePhone(phone); return n ? `${n}@s.whatsapp.net` : ''; }
 function jidToPhone(jid) { return normalizePhone(String(jid || '').split('@')[0].split(':')[0]); }
 function normalizePhone(v) { let n = onlyDigits(v).replace(/^0+/, ''); if ((n.length === 10 || n.length === 11) && !n.startsWith('55')) n = '55' + n; return n; }
-function getText(m) { return m.message?.conversation || m.message?.extendedTextMessage?.text || m.message?.imageMessage?.caption || ''; }
+function unwrapMessage(m) {
+  let msg = m.message || {};
+  if (msg.ephemeralMessage?.message) msg = msg.ephemeralMessage.message;
+  if (msg.viewOnceMessage?.message) msg = msg.viewOnceMessage.message;
+  if (msg.viewOnceMessageV2?.message) msg = msg.viewOnceMessageV2.message;
+  if (msg.documentWithCaptionMessage?.message) msg = msg.documentWithCaptionMessage.message;
+  return msg;
+}
+function getText(m) {
+  const msg = unwrapMessage(m);
+  return msg.conversation || msg.extendedTextMessage?.text || msg.imageMessage?.caption || msg.videoMessage?.caption || '';
+}
 function isPaidStatus(s) { return ['paid','approved','completed','aprovado','pago','payment.completed','payment.paid','payment.approved'].includes(String(s || '').toLowerCase()); }
 
-function samePhone(a, b) {
-  const x = normalizePhone(a);
-  const y = normalizePhone(b);
-  if (!x || !y) return false;
-  if (x === y) return true;
-  // Corrige diferença comum do WhatsApp no Brasil: com/sem nono dígito e variações do DDI.
-  const xs = [x, x.replace(/^55/, '')];
-  const ys = [y, y.replace(/^55/, '')];
-  for (const aa of xs) {
-    for (const bb of ys) {
-      if (aa === bb) return true;
-      if (aa.length >= 8 && bb.length >= 8 && (aa.endsWith(bb.slice(-8)) || bb.endsWith(aa.slice(-8)))) return true;
-      if (aa.length >= 10 && bb.length >= 10 && (aa.endsWith(bb.slice(-10)) || bb.endsWith(aa.slice(-10)))) return true;
-      if (aa.length >= 11 && bb.length >= 11 && (aa.endsWith(bb.slice(-11)) || bb.endsWith(aa.slice(-11)))) return true;
-    }
-  }
-  return false;
-}
-function isAdminPhone(phone) { return ADMIN_NUMBERS.some(n => samePhone(phone, n)); }
+function isAdminPhone(phone) { return ADMIN_NUMBERS.includes(normalizePhone(phone)); }
 async function streamToBuffer(stream) {
   const chunks = [];
   for await (const chunk of stream) chunks.push(chunk);
   return Buffer.concat(chunks);
 }
 async function saveIncomingImage(msg) {
-  const imageMessage = msg.message?.imageMessage;
+  const content = unwrapMessage(msg);
+  const imageMessage = content.imageMessage;
   if (!imageMessage) return '';
   const stream = await downloadContentFromMessage(imageMessage, 'image');
   const buffer = await streamToBuffer(stream);
@@ -362,24 +356,12 @@ async function tratarMensagem(msg) {
   const jid = msg.key.remoteJid;
   if (!jid || jid.endsWith('@g.us') || msg.key.fromMe || jid === 'status@broadcast') return;
   const text = getText(msg).trim();
-  if (!text) return;
   const phone = jidToPhone(jid);
   const cliente = upsertClient(phone, msg.pushName || 'Cliente', jid);
   const state = userState.get(jid);
   const lower = text.toLowerCase();
   const isAdmin = isAdminPhone(phone);
-
-  if (lower.startsWith('/')) {
-    console.log('COMANDO RECEBIDO:', { phone, jid, isAdmin, text, admins: ADMIN_NUMBERS });
-  }
-
-  if (!isAdmin && lower.startsWith('/')) {
-    return sendText(jid, `❌ Comando administrativo não autorizado.
-
-Número detectado: ${phone}
-
-Adicione esse número na variável ADMIN_NUMBERS do Render, ou confira se está com DDI 55.`);
-  }
+  const hasImage = !!unwrapMessage(msg).imageMessage;
 
   if (isAdmin && adminDeliveryState.has(jid)) {
     if (['cancelar','menu','sair'].includes(lower)) {
@@ -403,6 +385,8 @@ Adicione esse número na variável ADMIN_NUMBERS do Render, ou confira se está 
       return sendText(jid, `❌ Erro ao entregar pedido #${pedido.id}: ${e.message}`);
     }
   }
+
+  if (!text && !hasImage) return;
 
   if (isAdmin && lower.startsWith('/')) {
     const parts = lower.split(/\s+/).filter(Boolean);
@@ -621,7 +605,6 @@ app.get('/admin/financeiro',auth,(req,res)=>{
 app.get('/admin/backup',auth,(req,res)=>{ const files=fs.readdirSync(BACKUP_DIR).filter(f=>f.endsWith('.db') || f.endsWith('.tar.gz')).sort().reverse(); const rows=files.map(f=>`<tr><td>${safe(f)}</td><td><a class="btn" href="/admin/backup/download/${encodeURIComponent(f)}">Baixar</a></td></tr>`).join(''); res.send(page('Backup',`<h1>💾 Backup</h1><div class="card"><p class="muted">Backup completo inclui banco de dados e imagens dos QR Codes. O sistema também cria backup automático a cada ${BACKUP_INTERVAL_HOURS} horas.</p><form method="post" action="/admin/backup"><button class="green">Criar backup completo agora</button></form></div><table><tr><th>Arquivo</th><th>Ação</th></tr>${rows}</table>`)); });
 app.post('/admin/backup',auth,(req,res)=>{ criarBackupCompleto('backup_manual'); res.redirect('/admin/backup'); });
 app.get('/admin/backup/download/:file',auth,(req,res)=>{ const f=path.basename(req.params.file); res.download(path.join(BACKUP_DIR,f)); });
-app.get('/admin/reset-whatsapp',auth,(req,res)=>{ fs.rmSync(AUTH_DIR,{recursive:true,force:true}); fs.mkdirSync(AUTH_DIR,{recursive:true}); res.send(page('Reset','<div class="card">Sessão apagada. Reinicie o serviço e abra /qr.</div>')); });
 app.post('/admin/reset-whatsapp',auth,(req,res)=>{ fs.rmSync(AUTH_DIR,{recursive:true,force:true}); fs.mkdirSync(AUTH_DIR,{recursive:true}); res.send(page('Reset','<div class="card">Sessão apagada. Reinicie o serviço e abra /qr.</div>')); });
 
 app.get('/webhook/pixgo', (req,res)=>res.status(200).send('Webhook PixGo online ✅'));
