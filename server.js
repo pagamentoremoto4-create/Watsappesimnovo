@@ -70,7 +70,7 @@ function phoneToJid(phone) { const n = normalizePhone(phone); return n ? `${n}@s
 function jidToPhone(jid) { return normalizePhone(String(jid || '').split('@')[0].split(':')[0]); }
 function normalizePhone(v) { let n = onlyDigits(v).replace(/^0+/, ''); if ((n.length === 10 || n.length === 11) && !n.startsWith('55')) n = '55' + n; return n; }
 function getText(m) { return m.message?.conversation || m.message?.extendedTextMessage?.text || m.message?.imageMessage?.caption || ''; }
-function isPaidStatus(s) { return ['paid','approved','completed','aprovado','pago'].includes(String(s || '').toLowerCase()); }
+function isPaidStatus(s) { return ['paid','approved','completed','aprovado','pago','payment.completed','payment.paid','payment.approved'].includes(String(s || '').toLowerCase()); }
 
 function initDB() {
   db.exec(`
@@ -203,7 +203,7 @@ async function entregarPedido(pedidoId, manualTexto='', manualArquivo='') {
   const jid = pedido.cliente_jid || phoneToJid(pedido.cliente_telefone);
   const produto = db.prepare('SELECT * FROM produtos WHERE id=?').get(pedido.produto_id) || {};
   if (manualTexto || manualArquivo) {
-    db.prepare('UPDATE pedidos SET status="ENTREGUE", entrega_manual_texto=?, entregue_em=CURRENT_TIMESTAMP WHERE id=?').run(manualTexto || '', pedido.id);
+    db.prepare('UPDATE pedidos SET status=?, entrega_manual_texto=?, entregue_em=CURRENT_TIMESTAMP WHERE id=?').run('ENTREGUE', manualTexto || '', pedido.id);
     const cap = manualTexto || `✅ Seu eSIM foi liberado!\n\nPedido #${pedido.id}\nPlano: ${pedido.produto_nome}`;
     if (manualArquivo) await sendImage(jid, manualArquivo, cap); else await sendText(jid, cap);
     await notifyAdmins(`✅ *PEDIDO ENTREGUE MANUALMENTE*\n\nPedido: #${pedido.id}\nCliente: ${pedido.cliente_telefone}\nPlano: ${pedido.produto_nome}`);
@@ -211,13 +211,13 @@ async function entregarPedido(pedidoId, manualTexto='', manualArquivo='') {
   }
   const qr = db.prepare("SELECT * FROM estoque_qr WHERE produto_id=? AND status='DISPONIVEL' ORDER BY id ASC LIMIT 1").get(pedido.produto_id);
   if (!qr) {
-    db.prepare('UPDATE pedidos SET status="AGUARDANDO_ENVIO" WHERE id=?').run(pedido.id);
+    db.prepare('UPDATE pedidos SET status=? WHERE id=?').run('AGUARDANDO_ENVIO', pedido.id);
     await sendText(jid, `✅ Pagamento confirmado!\n\n📦 Pedido #${pedido.id}\n📱 ${pedido.produto_nome}\n\n⚠️ Seu pedido entrou para entrega manual.\n⏱ Prazo: ${PRAZO_MANUAL}`);
     await notifyAdmins(`🚨 *PEDIDO MANUAL - ESTOQUE ZERADO*\n\nPedido: #${pedido.id}\nCliente: ${pedido.cliente_telefone}\nPlano: ${pedido.produto_nome}\nValor: ${brl(pedido.valor)}\n\nAcesse /admin/pedidos para entregar.`);
     return;
   }
-  db.prepare('UPDATE estoque_qr SET status="VENDIDO", pedido_id=?, usado_em=CURRENT_TIMESTAMP WHERE id=?').run(pedido.id, qr.id);
-  db.prepare('UPDATE pedidos SET status="ENTREGUE", qr_estoque_id=?, entregue_em=CURRENT_TIMESTAMP WHERE id=?').run(qr.id, pedido.id);
+  db.prepare('UPDATE estoque_qr SET status=?, pedido_id=?, usado_em=CURRENT_TIMESTAMP WHERE id=?').run('VENDIDO', pedido.id, qr.id);
+  db.prepare('UPDATE pedidos SET status=?, qr_estoque_id=?, entregue_em=CURRENT_TIMESTAMP WHERE id=?').run('ENTREGUE', qr.id, pedido.id);
   const caption = `✅ eSIM entregue!\n\n📦 Pedido #${pedido.id}\n📱 Plano: ${pedido.produto_nome}\n📶 ${produto.gb || ''} · ⏱ ${produto.validade || ''}\n\n📌 Como instalar:\n1. Abra Ajustes/Configurações\n2. Vá em Celular/Dados móveis\n3. Toque em Adicionar eSIM\n4. Escaneie este QR Code\n\n⚠️ Use apenas uma vez.`;
   const filePath = qr.arquivo ? path.join(UPLOAD_DIR, path.basename(qr.arquivo)) : '';
   if (filePath && fs.existsSync(filePath)) await sendImage(jid, filePath, caption);
@@ -349,13 +349,13 @@ app.post('/admin/produtos/:id/editar',auth,(req,res)=>{ db.prepare('UPDATE produ
 app.post('/admin/produtos/:id/apagar',auth,(req,res)=>{ db.prepare('UPDATE produtos SET ativo=0 WHERE id=?').run(req.params.id); res.redirect('/admin/produtos'); });
 
 app.get('/admin/estoque',auth,(req,res)=>{ const ps=db.prepare('SELECT * FROM produtos WHERE ativo=1 ORDER BY nome').all(); const opts=ps.map(p=>`<option value="${p.id}">${safe(p.nome)} - estoque ${estoqueProduto(p.id)}</option>`).join(''); const rows=db.prepare('SELECT e.*,p.nome produto FROM estoque_qr e LEFT JOIN produtos p ON p.id=e.produto_id ORDER BY e.id DESC LIMIT 500').all().map(e=>`<tr><td>#${e.id}</td><td>${safe(e.produto)}</td><td><span class="pill">${safe(e.status)}</span></td><td>${e.arquivo?`<a href="/files/${encodeURIComponent(path.basename(e.arquivo))}" target="_blank">Ver QR</a>`:'Texto'}</td><td>${e.pedido_id||'-'}</td><td><form method="post" action="/admin/estoque/${e.id}/apagar" onsubmit="return confirm('Apagar QR?')"><button class="red">Apagar</button></form></td></tr>`).join(''); res.send(page('Estoque',`<h1>📥 Estoque QR</h1><div class="card"><form method="post" enctype="multipart/form-data"><select name="produto_id">${opts}</select><input type="file" name="qr" accept="image/*"><textarea name="codigo_texto" placeholder="Código texto opcional"></textarea><button class="green">Adicionar QR</button></form></div><div class="card"><table><tr><th>ID</th><th>Produto</th><th>Status</th><th>QR</th><th>Pedido</th><th>Ações</th></tr>${rows}</table></div>`)); });
-app.post('/admin/estoque',auth,upload.single('qr'),(req,res)=>{ const arquivo=req.file?req.file.filename:''; db.prepare('INSERT INTO estoque_qr(produto_id,arquivo,codigo_texto,status) VALUES(?,?,?,"DISPONIVEL")').run(req.body.produto_id,arquivo,req.body.codigo_texto||''); res.redirect('/admin/estoque'); });
+app.post('/admin/estoque',auth,upload.single('qr'),(req,res)=>{ const arquivo=req.file?req.file.filename:''; db.prepare('INSERT INTO estoque_qr(produto_id,arquivo,codigo_texto,status) VALUES(?,?,?,?)').run(req.body.produto_id,arquivo,req.body.codigo_texto||'', 'DISPONIVEL'); res.redirect('/admin/estoque'); });
 app.post('/admin/estoque/:id/apagar',auth,(req,res)=>{ const e=db.prepare('SELECT * FROM estoque_qr WHERE id=?').get(req.params.id); if(e?.arquivo){ try{fs.unlinkSync(path.join(UPLOAD_DIR,path.basename(e.arquivo)))}catch{} } db.prepare('DELETE FROM estoque_qr WHERE id=?').run(req.params.id); res.redirect('/admin/estoque'); });
 
 app.get('/admin/pedidos',auth,(req,res)=>{ const status=req.query.status; const rows=(status?db.prepare('SELECT * FROM pedidos WHERE status=? ORDER BY id DESC LIMIT 500').all(status):db.prepare('SELECT * FROM pedidos ORDER BY id DESC LIMIT 500').all()).map(p=>`<tr><td>#${p.id}</td><td>${safe(p.cliente_nome||'-')}<br>${safe(p.cliente_telefone||'-')}</td><td>${safe(p.produto_nome)}</td><td>${brl(p.valor)}</td><td><span class="pill">${safe(p.status)}</span></td><td>${safe(p.tipo_pagamento || 'compra')}</td><td><a class="btn green" href="/admin/pedidos/${p.id}/entregar">Entregar</a><form style="display:inline" method="post" action="/admin/pedidos/${p.id}/cancelar"><button class="red">Cancelar</button></form></td></tr>`).join(''); res.send(page('Pedidos',`<h1>📋 Pedidos</h1><div class="card"><table><tr><th>ID</th><th>Cliente</th><th>Produto</th><th>Valor</th><th>Status</th><th>Tipo</th><th>Ações</th></tr>${rows}</table></div>`)); });
 app.get('/admin/pedidos/:id/entregar',auth,(req,res)=>{ const p=db.prepare('SELECT * FROM pedidos WHERE id=?').get(req.params.id); res.send(page('Entregar',`<h1>📤 Entregar pedido #${safe(req.params.id)}</h1><div class="card"><form method="post" enctype="multipart/form-data"><textarea name="texto" rows="8">✅ Seu eSIM foi liberado!\n\nPedido #${p?.id||''}\nPlano: ${safe(p?.produto_nome||'')}</textarea><input type="file" name="qr" accept="image/*"><button class="green">Enviar ao cliente</button></form></div>`)); });
 app.post('/admin/pedidos/:id/entregar',auth,upload.single('qr'),async(req,res)=>{ await entregarPedido(Number(req.params.id), req.body.texto||'', req.file?path.join(UPLOAD_DIR,req.file.filename):''); res.redirect('/admin/pedidos'); });
-app.post('/admin/pedidos/:id/cancelar',auth,(req,res)=>{ db.prepare('UPDATE pedidos SET status="CANCELADO" WHERE id=?').run(req.params.id); res.redirect('/admin/pedidos'); });
+app.post('/admin/pedidos/:id/cancelar',auth,(req,res)=>{ db.prepare('UPDATE pedidos SET status=? WHERE id=?').run('CANCELADO', req.params.id); res.redirect('/admin/pedidos'); });
 
 app.get('/admin/clientes',auth,(req,res)=>{ const rows=db.prepare('SELECT * FROM clientes ORDER BY id DESC LIMIT 500').all().map(c=>`<tr><td>#${c.id}</td><td>${safe(c.nome)}</td><td>${safe(c.telefone)}</td><td>${brl(c.saldo || 0)}</td><td>${safe(c.criado_em)}</td><td><form method="post" action="/admin/clientes/saldo" style="display:flex;gap:6px;align-items:center"><input type="hidden" name="id" value="${c.id}"><input name="valor" placeholder="Valor" style="max-width:90px;margin:0"><button class="green">Add saldo</button></form></td></tr>`).join(''); res.send(page('Clientes',`<h1>👥 Clientes</h1><div class="card"><p class="muted">Adicione saldo manual para cliente comprar com saldo no WhatsApp.</p><table><tr><th>ID</th><th>Nome</th><th>Telefone</th><th>Saldo</th><th>Criado</th><th>Ação</th></tr>${rows}</table></div>`)); });
 app.post('/admin/clientes/saldo',auth,async(req,res)=>{ const id=Number(req.body.id); const valor=Number(String(req.body.valor||'0').replace(',','.')); if(id && valor){ db.prepare('UPDATE clientes SET saldo = saldo + ? WHERE id=?').run(valor,id); const c=db.prepare('SELECT * FROM clientes WHERE id=?').get(id); if(c) await sendText(c.jid || phoneToJid(c.telefone), `💰 Saldo adicionado!
@@ -388,18 +388,20 @@ app.post('/webhook/pixgo', async (req,res)=>{
     const status = b.status || b.payment_status || d.status || d.payment_status || event;
     if (!ref) return res.status(200).json({success:true,ignored:'no_ref'});
 
-    // No WhatsApp corrigido enviamos o ID do pedido igual ao Telegram.
-    // Também mantemos busca por external_ref para compatibilidade com pedidos antigos.
+    // O PixGo recebe external_reference/external_id com o ID do pedido, igual ao bot Telegram.
     const p = db.prepare('SELECT * FROM pedidos WHERE id=? OR external_ref=?').get(String(ref), String(ref));
-    if (p && isPaidStatus(status) && !['PAGO','ENTREGUE','AGUARDANDO_ENVIO'].includes(p.status)) {
-      db.prepare('UPDATE pedidos SET status="PAGO", pago_em=CURRENT_TIMESTAMP WHERE id=?').run(p.id);
+    if (!p) return res.status(200).json({success:true,ignored:'pedido_not_found', ref:String(ref)});
+
+    if (isPaidStatus(status) && !['PAGO','ENTREGUE','AGUARDANDO_ENVIO'].includes(p.status)) {
+      db.prepare('UPDATE pedidos SET status=?, pago_em=CURRENT_TIMESTAMP WHERE id=?').run('PAGO', p.id);
+      await sendText(p.cliente_jid || phoneToJid(p.cliente_telefone), `✅ Pagamento confirmado!\n\n📦 Pedido #${p.id}\n📱 ${p.produto_nome}\n\nPreparando entrega...`);
       await notifyAdmins(`💰 *PAGAMENTO APROVADO*\n\nPedido: #${p.id}\nCliente: ${p.cliente_telefone}\nPlano: ${p.produto_nome}\nValor: ${brl(p.valor)}`);
       await entregarPedido(p.id);
     }
-    res.status(200).json({success:true});
+    return res.status(200).json({success:true});
   } catch(e) {
     console.log('Webhook erro:', e.message);
-    res.status(200).json({success:true,error:e.message});
+    return res.status(200).json({success:true,error:e.message});
   }
 });
 

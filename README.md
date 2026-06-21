@@ -1,104 +1,23 @@
-# Centralunlocker eSIM WhatsApp
+# WhatsApp eSIM - Correção pagamento e saldo
 
-Bot WhatsApp do zero para venda de eSIM com PixGo.
+Correções desta versão:
 
-## Funções
+- Webhook PixGo confirma `payment.completed`, `payment.paid` e `payment.approved`.
+- Status SQL corrigidos com parâmetros para evitar erro `no such column`.
+- Compra com saldo entrega pelo painel sem erro 502.
+- PIX copia e cola continua em mensagem separada.
 
-- WhatsApp via Baileys
-- Menu de cliente
-- Planos com estoque visível: `TIM 50GB - 10 disponíveis`
-- PixGo automático
-- Entrega automática quando tiver QR em estoque
-- Entrega manual quando estoque acabar
-- Aviso para admin
-- Painel admin Web
-- Produtos em destaque
-- Estoque baixo/zerado
-- Pedidos manuais
-- Backup do banco
-- Reset da sessão WhatsApp
-
-## Instalar local
-
-```bash
-npm install
-cp .env.example .env
-npm start
-```
-
-Abra no navegador:
-
-```txt
-http://localhost:10000/qr
-```
-
-## Render
-
-Build command:
-
-```bash
-npm install
-```
-
-Start command:
-
-```bash
-npm start
-```
-
-Crie Persistent Disk com mount path:
-
-```txt
-/data
-```
-
-## Painel
-
-```txt
-https://SEU-SERVICO.onrender.com/admin
-```
-
-Login padrão:
-
-```txt
-Usuário: admin
-Senha: 123456
-```
-
-Troque depois pelo painel.
-
-## Webhook PixGo
-
-```txt
-https://SEU-SERVICO.onrender.com/webhook/pixgo
-```
-
-## Correção importante no Render
-
-Adicione esta variável em **Environment**:
+Variáveis Render:
 
 ```txt
 NODE_VERSION=20.20.2
+BASE_URL=https://watsappesimnovo.onrender.com
+PIXGO_API_KEY=sua_chave
+PIXGO_URL=https://pixgo.org/api/v1/payment/create
 ```
 
-Isso evita erro de compilação do better-sqlite3 no Node 26.
+Webhook PixGo:
 
-## Atualização: saldo do cliente
-
-Esta versão adiciona:
-
-- Opção 4 no WhatsApp: Depositar saldo via PIX
-- Opção 5 no WhatsApp: Meu saldo
-- Compra com saldo no plano selecionado
-- Painel Admin > Clientes com botão para adicionar saldo manualmente
-- Webhook PixGo reconhece depósito e credita saldo automaticamente
-- Pedidos mostram tipo de pagamento: pix, saldo ou deposito
-
-Fluxo do cliente:
-
-1. Digita `menu`
-2. Escolhe `4` para depositar saldo ou `1` para comprar eSIM
-3. Ao selecionar um plano, pode escolher:
-   - `1` Gerar PIX
-   - `2` Comprar com saldo
-   - `3` Voltar
+```txt
+https://watsappesimnovo.onrender.com/webhook/pixgo
+```
