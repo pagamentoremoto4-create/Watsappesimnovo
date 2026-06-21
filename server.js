@@ -166,11 +166,31 @@ function getProdutoByChoice(choice) {
   const p = ps[idx]; p.estoque = estoqueProduto(p.id); return p;
 }
 async function createPix(pedido, produto) {
-  const payload = { amount: Number(pedido.valor), description: `eSIM ${produto.nome} - Pedido ${pedido.id}`, external_reference: pedido.external_ref, external_id: pedido.external_ref, webhook_url: `${BASE_URL}/webhook/pixgo` };
-  const r = await axios.post(PIXGO_URL, payload, { headers: { 'Content-Type': 'application/json', 'X-API-Key': PIXGO_API_KEY }, timeout: 30000 });
-  const d = r.data || {};
-  const pixId = d.payment_id || d.id || d.transaction_id || d.pixgo_id || d?.data?.payment_id || d?.data?.id || '';
-  const copia = d.qr_code || d.pix_copy_paste || d.copy_paste || d.pix || d.brcode || d?.data?.qr_code || d?.data?.copy_paste || d?.data?.pix_copy_paste || '';
+  if (!PIXGO_API_KEY) throw new Error('PIXGO_API_KEY não configurada no Render');
+  if (!BASE_URL) throw new Error('BASE_URL não configurada no Render');
+
+  // Mesmo padrão do seu bot Telegram que já funciona com a PixGo
+  const payload = {
+    amount: Number(pedido.valor),
+    description: `Compra ${produto.nome} #${pedido.id}`,
+    webhook_url: `${BASE_URL}/webhook/pixgo`,
+    external_reference: String(pedido.id),
+    external_id: String(pedido.id)
+  };
+
+  const headers = { 'X-API-Key': PIXGO_API_KEY, 'Content-Type': 'application/json' };
+  const r = await axios.post(PIXGO_URL, payload, { headers, timeout: 30000 });
+  const resposta = r.data || {};
+  console.log('PIXGO RESPOSTA:', resposta);
+
+  const data = resposta.data || resposta;
+  const pixId = data.payment_id || data.id || data.transaction_id || '';
+  const copia = data.qr_code || data.pix_copy_paste || data.copy_paste || data.pix || data.brcode || '';
+  if (!copia) {
+    const err = new Error('PixGo não retornou copia e cola');
+    err.responseData = resposta;
+    throw err;
+  }
   db.prepare('UPDATE pedidos SET pixgo_id=? WHERE id=?').run(pixId, pedido.id);
   return copia;
 }
@@ -232,12 +252,15 @@ async function tratarMensagem(msg) {
     return sendText(jid, `📱 *Plano Selecionado*\n\n${produto.nome}\n📅 ${produto.validade || '30 dias'}\n💰 ${brl(produto.preco)}\n📦 Estoque: ${produto.estoque}\n${entrega}\n\n1️⃣ Gerar PIX\n2️⃣ Voltar`);
   }
   if (state?.step === 'confirmar') {
-    if (text === '2') { userState.set(jid, { step: 'planos' }); return sendText(jid, listaPlanos()); }
-    if (text !== '1') return sendText(jid, 'Digite 1 para gerar PIX ou 2 para voltar.');
+    const opcaoConfirmar = text.toLowerCase().trim();
+    const querVoltar = opcaoConfirmar === '2' || opcaoConfirmar.startsWith('2️⃣') || opcaoConfirmar.includes('voltar');
+    const querPix = opcaoConfirmar === '1' || opcaoConfirmar.startsWith('1️⃣') || opcaoConfirmar.includes('gerar pix') || opcaoConfirmar.includes('pix') || opcaoConfirmar.includes('comprar');
+    if (querVoltar) { userState.set(jid, { step: 'planos' }); return sendText(jid, listaPlanos()); }
+    if (!querPix) return sendText(jid, 'Digite *1* para gerar PIX ou *2* para voltar.');
     const produto = produtoComEstoque(state.produto_id);
     if (!produto) { userState.delete(jid); return sendText(jid, '❌ Produto indisponível.'); }
     if (produto.estoque <= 0 && !produto.permite_manual_sem_estoque) return sendText(jid, '❌ Esse plano está esgotado no momento.');
-    const external_ref = `esim_${uuidv4()}`;
+    const external_ref = String(Date.now()) + '_' + uuidv4();
     const info = db.prepare('INSERT INTO pedidos(external_ref,cliente_id,cliente_nome,cliente_telefone,cliente_jid,produto_id,produto_nome,valor,status) VALUES(?,?,?,?,?,?,?,?,"PENDENTE")')
       .run(external_ref, cliente.id, cliente.nome, cliente.telefone, jid, produto.id, produto.nome, produto.preco);
     const pedido = db.prepare('SELECT * FROM pedidos WHERE id=?').get(info.lastInsertRowid);
@@ -249,9 +272,13 @@ async function tratarMensagem(msg) {
       await sendText(jid, `✅ *PIX GERADO*\n\n📦 Pedido #${pedido.id}\n📱 ${produto.nome}\n💰 ${brl(produto.preco)}\n\n📋 Copia e cola:\n${copia}\n\n⏳ Após pagar, a entrega será automática ou manual conforme estoque.`);
       await notifyAdmins(`🛒 *NOVA VENDA INICIADA*\n\nPedido: #${pedido.id}\nCliente: ${cliente.telefone}\nPlano: ${produto.nome}\nValor: ${brl(produto.preco)}`);
     } catch(e) {
-      console.log('Erro PixGo:', e.response?.data || e.message);
+      console.log('ERRO PIXGO:', e.response?.data || e.responseData || e.message);
       db.prepare('UPDATE pedidos SET status="ERRO_PIX" WHERE id=?').run(pedido.id);
-      await sendText(jid, '❌ Erro ao gerar PIX. Chame o suporte.');
+      await sendText(jid, `❌ Erro ao gerar PIX.
+
+Motivo: ${e.message}
+
+Confira PIXGO_API_KEY, BASE_URL e PIXGO_URL no Render.`);
     }
     return;
   }
@@ -315,20 +342,36 @@ app.post('/admin/backup',auth,(req,res)=>{ const f=`backup_esim_${new Date().toI
 app.get('/admin/backup/download/:file',auth,(req,res)=>{ const f=path.basename(req.params.file); res.download(path.join(BACKUP_DIR,f)); });
 app.post('/admin/reset-whatsapp',auth,(req,res)=>{ fs.rmSync(AUTH_DIR,{recursive:true,force:true}); fs.mkdirSync(AUTH_DIR,{recursive:true}); res.send(page('Reset','<div class="card">Sessão apagada. Reinicie o serviço e abra /qr.</div>')); });
 
+app.get('/webhook/pixgo', (req,res)=>res.status(200).send('Webhook PixGo online ✅'));
 app.post('/webhook/pixgo', async (req,res)=>{
   try {
-    const b=req.body||{}; const d=b.data||b;
-    const ref=b.external_reference||b.external_ref||b.reference||b.id_ref||b.external_id||d.external_reference||d.external_id||d.reference;
-    const status=b.status||b.payment_status||d.status||d.payment_status;
-    if(!ref) return res.status(200).json({success:true,ignored:'no_ref'});
-    const p=db.prepare('SELECT * FROM pedidos WHERE external_ref=?').get(ref);
-    if(p && isPaidStatus(status) && !['PAGO','ENTREGUE','AGUARDANDO_ENVIO'].includes(p.status)){
+    const b = req.body || {};
+    console.log('WEBHOOK PIXGO:', b);
+    const event = req.headers['x-webhook-event'] || b.event;
+    if (event && !['payment.completed','payment.paid','payment.approved'].includes(event)) {
+      return res.status(200).json({success:true,ignored:'event'});
+    }
+
+    const d = b.data || b;
+    const ref = b.external_reference || b.externalReference || b.external_id || b.externalId ||
+                d.external_reference || d.externalReference || d.external_id || d.externalId ||
+                b.metadata?.external_reference || d.metadata?.external_reference;
+    const status = b.status || b.payment_status || d.status || d.payment_status || event;
+    if (!ref) return res.status(200).json({success:true,ignored:'no_ref'});
+
+    // No WhatsApp corrigido enviamos o ID do pedido igual ao Telegram.
+    // Também mantemos busca por external_ref para compatibilidade com pedidos antigos.
+    const p = db.prepare('SELECT * FROM pedidos WHERE id=? OR external_ref=?').get(String(ref), String(ref));
+    if (p && isPaidStatus(status) && !['PAGO','ENTREGUE','AGUARDANDO_ENVIO'].includes(p.status)) {
       db.prepare('UPDATE pedidos SET status="PAGO", pago_em=CURRENT_TIMESTAMP WHERE id=?').run(p.id);
       await notifyAdmins(`💰 *PAGAMENTO APROVADO*\n\nPedido: #${p.id}\nCliente: ${p.cliente_telefone}\nPlano: ${p.produto_nome}\nValor: ${brl(p.valor)}`);
       await entregarPedido(p.id);
     }
     res.status(200).json({success:true});
-  } catch(e) { console.log('Webhook erro:',e.message); res.status(200).json({success:true,error:e.message}); }
+  } catch(e) {
+    console.log('Webhook erro:', e.message);
+    res.status(200).json({success:true,error:e.message});
+  }
 });
 
 initDB();
