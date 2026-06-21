@@ -16,7 +16,8 @@ const {
   default: makeWASocket,
   useMultiFileAuthState,
   DisconnectReason,
-  fetchLatestBaileysVersion
+  fetchLatestBaileysVersion,
+  downloadContentFromMessage
 } = require('@whiskeysockets/baileys');
 
 const PORT = Number(process.env.PORT || 10000);
@@ -65,6 +66,7 @@ let sock = null;
 let qrBase64 = null;
 let conectado = false;
 const userState = new Map();
+const adminDeliveryState = new Map();
 
 function onlyDigits(v) { return String(v || '').replace(/\D/g, ''); }
 function brl(v) { return Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }); }
@@ -75,6 +77,43 @@ function jidToPhone(jid) { return normalizePhone(String(jid || '').split('@')[0]
 function normalizePhone(v) { let n = onlyDigits(v).replace(/^0+/, ''); if ((n.length === 10 || n.length === 11) && !n.startsWith('55')) n = '55' + n; return n; }
 function getText(m) { return m.message?.conversation || m.message?.extendedTextMessage?.text || m.message?.imageMessage?.caption || ''; }
 function isPaidStatus(s) { return ['paid','approved','completed','aprovado','pago','payment.completed','payment.paid','payment.approved'].includes(String(s || '').toLowerCase()); }
+
+function isAdminPhone(phone) { return ADMIN_NUMBERS.includes(normalizePhone(phone)); }
+async function streamToBuffer(stream) {
+  const chunks = [];
+  for await (const chunk of stream) chunks.push(chunk);
+  return Buffer.concat(chunks);
+}
+async function saveIncomingImage(msg) {
+  const imageMessage = msg.message?.imageMessage;
+  if (!imageMessage) return '';
+  const stream = await downloadContentFromMessage(imageMessage, 'image');
+  const buffer = await streamToBuffer(stream);
+  const fileName = `entrega_admin_${Date.now()}_${Math.random().toString(16).slice(2)}.jpg`;
+  const filePath = path.join(UPLOAD_DIR, fileName);
+  fs.writeFileSync(filePath, buffer);
+  return filePath;
+}
+function pedidoResumo(p) {
+  if (!p) return '';
+  return `#${p.id} - ${p.produto_nome || 'Pedido'}\nCliente: ${p.cliente_telefone || '-'}\nValor: ${brl(p.valor)}\nStatus: ${p.status}`;
+}
+async function listarPendentesAdmin(jid) {
+  const rows = db.prepare("SELECT * FROM pedidos WHERE status IN ('AGUARDANDO_ENVIO','PAGO') ORDER BY id ASC LIMIT 30").all();
+  if (!rows.length) return sendText(jid, '✅ Nenhum pedido manual pendente.');
+  const txt = '📋 *Pedidos pendentes para entrega*\n\n' + rows.map(p => `${pedidoResumo(p)}\n➡️ /entregar ${p.id}`).join('\n\n');
+  return sendText(jid, txt);
+}
+async function iniciarEntregaAdmin(jid, pedidoId) {
+  const p = db.prepare("SELECT * FROM pedidos WHERE id=?").get(Number(pedidoId));
+  if (!p) return sendText(jid, '❌ Pedido não encontrado.');
+  if (['ENTREGUE','CANCELADO'].includes(p.status)) return sendText(jid, `❌ Pedido #${p.id} está com status ${p.status}.`);
+  adminDeliveryState.set(jid, { pedido_id: p.id });
+  return sendText(jid, `📤 *Entrega manual pelo WhatsApp*\n\n${pedidoResumo(p)}\n\nEnvie agora a *foto do QR Code* ou uma mensagem de texto com os dados da entrega.\n\nPara cancelar esta ação, digite *cancelar*.`);
+}
+async function comandosAdminWhatsApp(jid) {
+  return sendText(jid, `🔐 *Comandos Admin WhatsApp*\n\n/pendentes - listar pedidos para entregar\n/entregar ID - iniciar entrega manual\n/cancelar ID - cancelar pedido\n/pedido ID - ver dados do pedido\n\nExemplo:\n/entregar 123`);
+}
 
 function initDB() {
   db.exec(`
@@ -286,7 +325,7 @@ async function entregarPedido(pedidoId, manualTexto='', manualArquivo='') {
   if (!qr) {
     db.prepare('UPDATE pedidos SET status=? WHERE id=?').run('AGUARDANDO_ENVIO', pedido.id);
     await sendText(jid, `✅ Pagamento confirmado!\n\n📦 Pedido #${pedido.id}\n📱 ${pedido.produto_nome}\n\n⚠️ Seu pedido entrou para entrega manual.\n⏱ Prazo: ${PRAZO_MANUAL}`);
-    await notifyAdmins(`🚨 *PEDIDO MANUAL - ESTOQUE ZERADO*\n\nPedido: #${pedido.id}\nCliente: ${pedido.cliente_telefone}\nPlano: ${pedido.produto_nome}\nValor: ${brl(pedido.valor)}\n\nAcesse /admin/pedidos para entregar.`);
+    await notifyAdmins(`🚨 *PEDIDO MANUAL - ESTOQUE ZERADO*\n\nPedido: #${pedido.id}\nCliente: ${pedido.cliente_telefone}\nPlano: ${pedido.produto_nome}\nValor: ${brl(pedido.valor)}\n\nUse /pendentes ou /entregar ${pedido.id} aqui no WhatsApp, ou acesse /admin/pedidos.`);
     return;
   }
   db.prepare('UPDATE estoque_qr SET status=?, pedido_id=?, usado_em=CURRENT_TIMESTAMP WHERE id=?').run('VENDIDO', pedido.id, qr.id);
@@ -310,6 +349,54 @@ async function tratarMensagem(msg) {
   const cliente = upsertClient(phone, msg.pushName || 'Cliente', jid);
   const state = userState.get(jid);
   const lower = text.toLowerCase();
+  const isAdmin = isAdminPhone(phone);
+
+  if (isAdmin && adminDeliveryState.has(jid)) {
+    if (['cancelar','menu','sair'].includes(lower)) {
+      adminDeliveryState.delete(jid);
+      return sendText(jid, '❌ Entrega manual cancelada.');
+    }
+    const stAdmin = adminDeliveryState.get(jid);
+    const pedido = db.prepare('SELECT * FROM pedidos WHERE id=?').get(stAdmin.pedido_id);
+    if (!pedido) {
+      adminDeliveryState.delete(jid);
+      return sendText(jid, '❌ Pedido não encontrado.');
+    }
+    try {
+      const imgPath = await saveIncomingImage(msg);
+      const textoEntrega = text || `✅ Seu eSIM foi liberado!\n\nPedido #${pedido.id}\nPlano: ${pedido.produto_nome}`;
+      await entregarPedido(pedido.id, textoEntrega, imgPath);
+      adminDeliveryState.delete(jid);
+      return sendText(jid, `✅ Pedido #${pedido.id} entregue ao cliente ${pedido.cliente_telefone}.`);
+    } catch (e) {
+      console.log('ERRO ENTREGA ADMIN WHATSAPP:', e.message);
+      return sendText(jid, `❌ Erro ao entregar pedido #${pedido.id}: ${e.message}`);
+    }
+  }
+
+  if (isAdmin && lower.startsWith('/')) {
+    const parts = lower.split(/\s+/).filter(Boolean);
+    const cmd = parts[0];
+    const id = parts[1];
+    if (cmd === '/pendentes') return listarPendentesAdmin(jid);
+    if (cmd === '/comandos' || cmd === '/admin' || cmd === '/ajuda') return comandosAdminWhatsApp(jid);
+    if (cmd === '/entregar') {
+      if (!id) return sendText(jid, 'Use assim: /entregar ID_DO_PEDIDO');
+      return iniciarEntregaAdmin(jid, id);
+    }
+    if (cmd === '/cancelar') {
+      if (!id) return sendText(jid, 'Use assim: /cancelar ID_DO_PEDIDO');
+      db.prepare('UPDATE pedidos SET status=? WHERE id=?').run('CANCELADO', Number(id));
+      return sendText(jid, `✅ Pedido #${id} cancelado.`);
+    }
+    if (cmd === '/pedido') {
+      if (!id) return sendText(jid, 'Use assim: /pedido ID_DO_PEDIDO');
+      const p = db.prepare('SELECT * FROM pedidos WHERE id=?').get(Number(id));
+      if (!p) return sendText(jid, '❌ Pedido não encontrado.');
+      return sendText(jid, `📦 *Pedido*\n\n${pedidoResumo(p)}\nTipo: ${p.tipo_pagamento || '-'}\nCriado: ${p.criado_em || '-'}\nPago: ${p.pago_em || '-'}\n\nPara entregar: /entregar ${p.id}`);
+    }
+  }
+
   if (['menu','oi','olá','ola','start','inicio','início','cancelar'].includes(lower)) { userState.delete(jid); return sendMenu(jid, cliente); }
   if (lower === '1' && !state) { userState.set(jid, { step: 'planos' }); return sendText(jid, listaPlanos()); }
   if (lower === '2' && !state) {

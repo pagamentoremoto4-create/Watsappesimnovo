@@ -66,3 +66,17 @@ Opções disponíveis:
 - Remover imagem do menu
 
 A imagem será enviada quando o cliente digitar: oi, menu, olá, start ou cancelar.
+
+
+## Entrega manual pelo WhatsApp Admin
+
+Configure `ADMIN_NUMBERS=55SEUNUMERO` no Render. Pelo WhatsApp do admin use:
+
+```txt
+/pendentes
+/entregar 123
+/cancelar 123
+/pedido 123
+```
+
+Depois de `/entregar 123`, envie a foto do QR Code ou texto da entrega. O bot envia ao cliente e marca o pedido como entregue.
