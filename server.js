@@ -526,7 +526,7 @@ async function startWhatsApp() {
       conectado = false;
       const code = lastDisconnect?.error?.output?.statusCode;
       if (code !== DisconnectReason.loggedOut) startWhatsApp();
-      else console.log('Sessão desconectada. Use /admin/reset-whatsapp.');
+      else console.log('Sessão desconectada. Abra /admin/whatsapp e clique para resetar.');
     }
   });
   sock.ev.on('messages.upsert', async ({ messages }) => { for (const m of messages) { try { await tratarMensagem(m); } catch(e) { console.log('Erro mensagem:', e.message); } } });
@@ -535,11 +535,29 @@ async function startWhatsApp() {
 function page(title, body) {
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${safe(title)}</title><style>
   body{margin:0;background:#07111f;color:#eaf0f8;font-family:Arial,sans-serif}.layout{display:grid;grid-template-columns:250px 1fr;min-height:100vh}.side{background:#09101f;padding:18px;border-right:1px solid #24324b}.brand{font-weight:900;font-size:21px;margin-bottom:20px}.side a{display:block;color:#dbeafe;text-decoration:none;padding:11px;border-radius:12px;margin:5px 0}.side a:hover{background:#13223a}.main{padding:22px}.card{background:#101b31;border:1px solid #24324b;border-radius:18px;padding:16px;margin:14px 0;box-shadow:0 14px 35px rgba(0,0,0,.25)}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.metric h1{margin:0;font-size:30px}.metric p{color:#97a6ba}input,select,textarea{width:100%;padding:11px;border-radius:12px;border:1px solid #334155;background:#08111f;color:white;margin:6px 0 12px}.btn,button{background:#2563eb;color:white;border:0;border-radius:11px;padding:9px 13px;text-decoration:none;font-weight:bold;display:inline-block;margin:2px;cursor:pointer}.green{background:#16a34a}.red{background:#dc2626}.orange{background:#ea580c}.muted{color:#97a6ba}table{width:100%;border-collapse:collapse;background:#08111f;border-radius:14px;overflow:hidden}td,th{padding:10px;border-bottom:1px solid #24324b;text-align:left}th{background:#13223a}.pill{padding:5px 9px;border-radius:999px;background:#1e40af;font-weight:bold}@media(max-width:800px){.layout{grid-template-columns:1fr}.side{position:relative}.main{padding:14px}}
-  </style></head><body><div class="layout"><div class="side"><div class="brand">📱 Centralunlocker</div><a href="/admin">📊 Dashboard</a><a href="/admin/produtos">📦 Produtos</a><a href="/admin/estoque">📥 Estoque QR</a><a href="/admin/pedidos">📋 Pedidos</a><a href="/admin/pedidos?status=AGUARDANDO_ENVIO">🟡 Pedidos Manuais</a><a href="/admin/clientes">👥 Clientes</a><a href="/admin/mensagem">📢 Mensagem</a><a href="/admin/menu-imagem">🖼️ Imagem do Menu</a><a href="/admin/backup">💾 Backup</a><a href="/admin/financeiro">💵 Financeiro</a><a href="/qr">🔳 QR WhatsApp</a><a href="/admin/senha">🔐 Alterar senha</a><a href="/admin/logout">🚪 Sair</a></div><div class="main">${body}</div></div></body></html>`;
+  </style></head><body><div class="layout"><div class="side"><div class="brand">📱 Centralunlocker</div><a href="/admin">📊 Dashboard</a><a href="/admin/produtos">📦 Produtos</a><a href="/admin/estoque">📥 Estoque QR</a><a href="/admin/pedidos">📋 Pedidos</a><a href="/admin/pedidos?status=AGUARDANDO_ENVIO">🟡 Pedidos Manuais</a><a href="/admin/clientes">👥 Clientes</a><a href="/admin/mensagem">📢 Mensagem</a><a href="/admin/menu-imagem">🖼️ Imagem do Menu</a><a href="/admin/backup">💾 Backup</a><a href="/admin/financeiro">💵 Financeiro</a><a href="/admin/whatsapp">🔳 QR WhatsApp</a><a href="/admin/senha">🔐 Alterar senha</a><a href="/admin/logout">🚪 Sair</a></div><div class="main">${body}</div></div></body></html>`;
 }
 
 app.get('/', (req,res)=>res.redirect('/admin'));
-app.get('/qr', async (req,res)=>res.send(page('QR WhatsApp', `<h1>🔳 QR WhatsApp</h1><div class="card"><p>Status: <b>${conectado ? 'Conectado' : 'Aguardando QR'}</b></p>${qrBase64 ? `<img src="${qrBase64}" style="max-width:320px;width:100%">` : '<p>Se não aparecer QR, reinicie ou aguarde alguns segundos.</p>'}</div>`)));
+function qrWhatsappHtml(msg='') {
+  return `<h1>🔳 QR WhatsApp</h1>
+  ${msg ? `<div class="card"><b>${safe(msg)}</b></div>` : ''}
+  <div class="card">
+    <p>Status: <b>${conectado ? 'Conectado ✅' : 'Aguardando QR'}</b></p>
+    ${qrBase64 ? `<img src="${qrBase64}" style="max-width:320px;width:100%;background:white;padding:10px;border-radius:12px">` : '<p>Se não aparecer QR, clique em <b>Gerar novo QR</b> e aguarde alguns segundos.</p>'}
+    <p class="muted">Esta função apaga somente a sessão do WhatsApp. Não apaga banco, clientes, pedidos, saldo, estoque, imagens nem backups.</p>
+  </div>
+  <div class="card">
+    <h2>Reconectar WhatsApp</h2>
+    <form method="post" action="/admin/reset-whatsapp" onsubmit="return confirm('Apagar somente a sessão do WhatsApp e gerar QR novo?')">
+      <button class="red">🗑 Apagar sessão antiga e gerar novo QR</button>
+    </form>
+    <br>
+    <a class="btn" href="/qr">🔄 Atualizar QR</a>
+  </div>`;
+}
+app.get('/qr', auth, async (req,res)=>res.send(page('QR WhatsApp', qrWhatsappHtml())));
+app.get('/admin/whatsapp', auth, async (req,res)=>res.send(page('QR WhatsApp', qrWhatsappHtml())));
 app.get('/admin/login',(req,res)=>res.send(page('Login',`<div class="card" style="max-width:420px"><h1>Login Admin</h1><form method="post"><input name="user" placeholder="Usuário"><input name="pass" type="password" placeholder="Senha"><button>Entrar</button></form></div>`)));
 app.post('/admin/login',(req,res)=>{ const ok=req.body.user===ADMIN_USER && bcrypt.compareSync(req.body.pass||'', getConfig('admin_hash')); if(!ok) return res.send(page('Erro','<div class="card">Login inválido.</div>')); req.session.admin=true; res.redirect('/admin'); });
 app.get('/admin/logout',(req,res)=>req.session.destroy(()=>res.redirect('/admin/login')));
@@ -605,7 +623,23 @@ app.get('/admin/financeiro',auth,(req,res)=>{
 app.get('/admin/backup',auth,(req,res)=>{ const files=fs.readdirSync(BACKUP_DIR).filter(f=>f.endsWith('.db') || f.endsWith('.tar.gz')).sort().reverse(); const rows=files.map(f=>`<tr><td>${safe(f)}</td><td><a class="btn" href="/admin/backup/download/${encodeURIComponent(f)}">Baixar</a></td></tr>`).join(''); res.send(page('Backup',`<h1>💾 Backup</h1><div class="card"><p class="muted">Backup completo inclui banco de dados e imagens dos QR Codes. O sistema também cria backup automático a cada ${BACKUP_INTERVAL_HOURS} horas.</p><form method="post" action="/admin/backup"><button class="green">Criar backup completo agora</button></form></div><table><tr><th>Arquivo</th><th>Ação</th></tr>${rows}</table>`)); });
 app.post('/admin/backup',auth,(req,res)=>{ criarBackupCompleto('backup_manual'); res.redirect('/admin/backup'); });
 app.get('/admin/backup/download/:file',auth,(req,res)=>{ const f=path.basename(req.params.file); res.download(path.join(BACKUP_DIR,f)); });
-app.post('/admin/reset-whatsapp',auth,(req,res)=>{ fs.rmSync(AUTH_DIR,{recursive:true,force:true}); fs.mkdirSync(AUTH_DIR,{recursive:true}); res.send(page('Reset','<div class="card">Sessão apagada. Reinicie o serviço e abra /qr.</div>')); });
+async function resetWhatsAppSession() {
+  try { if (sock?.ws?.close) sock.ws.close(); } catch(e) { console.log('Erro fechando socket:', e.message); }
+  sock = null;
+  conectado = false;
+  qrBase64 = null;
+  fs.rmSync(AUTH_DIR, { recursive: true, force: true });
+  fs.mkdirSync(AUTH_DIR, { recursive: true });
+  setTimeout(() => startWhatsApp().catch(e => console.log('Erro reiniciar WhatsApp:', e.message)), 1000);
+}
+app.get('/admin/reset-whatsapp', auth, async (req,res) => {
+  await resetWhatsAppSession();
+  res.send(page('Reset WhatsApp', qrWhatsappHtml('Sessão antiga apagada. Aguarde alguns segundos e atualize esta página para aparecer o novo QR.')));
+});
+app.post('/admin/reset-whatsapp', auth, async (req,res)=>{
+  await resetWhatsAppSession();
+  res.send(page('Reset WhatsApp', qrWhatsappHtml('Sessão antiga apagada. Aguarde alguns segundos e atualize esta página para aparecer o novo QR.')));
+});
 
 app.get('/webhook/pixgo', (req,res)=>res.status(200).send('Webhook PixGo online ✅'));
 app.post('/webhook/pixgo', async (req,res)=>{
