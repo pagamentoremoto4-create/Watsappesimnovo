@@ -78,7 +78,25 @@ function normalizePhone(v) { let n = onlyDigits(v).replace(/^0+/, ''); if ((n.le
 function getText(m) { return m.message?.conversation || m.message?.extendedTextMessage?.text || m.message?.imageMessage?.caption || ''; }
 function isPaidStatus(s) { return ['paid','approved','completed','aprovado','pago','payment.completed','payment.paid','payment.approved'].includes(String(s || '').toLowerCase()); }
 
-function isAdminPhone(phone) { return ADMIN_NUMBERS.includes(normalizePhone(phone)); }
+function samePhone(a, b) {
+  const x = normalizePhone(a);
+  const y = normalizePhone(b);
+  if (!x || !y) return false;
+  if (x === y) return true;
+  // Corrige diferença comum do WhatsApp no Brasil: com/sem nono dígito e variações do DDI.
+  const xs = [x, x.replace(/^55/, '')];
+  const ys = [y, y.replace(/^55/, '')];
+  for (const aa of xs) {
+    for (const bb of ys) {
+      if (aa === bb) return true;
+      if (aa.length >= 8 && bb.length >= 8 && (aa.endsWith(bb.slice(-8)) || bb.endsWith(aa.slice(-8)))) return true;
+      if (aa.length >= 10 && bb.length >= 10 && (aa.endsWith(bb.slice(-10)) || bb.endsWith(aa.slice(-10)))) return true;
+      if (aa.length >= 11 && bb.length >= 11 && (aa.endsWith(bb.slice(-11)) || bb.endsWith(aa.slice(-11)))) return true;
+    }
+  }
+  return false;
+}
+function isAdminPhone(phone) { return ADMIN_NUMBERS.some(n => samePhone(phone, n)); }
 async function streamToBuffer(stream) {
   const chunks = [];
   for await (const chunk of stream) chunks.push(chunk);
@@ -351,6 +369,18 @@ async function tratarMensagem(msg) {
   const lower = text.toLowerCase();
   const isAdmin = isAdminPhone(phone);
 
+  if (lower.startsWith('/')) {
+    console.log('COMANDO RECEBIDO:', { phone, jid, isAdmin, text, admins: ADMIN_NUMBERS });
+  }
+
+  if (!isAdmin && lower.startsWith('/')) {
+    return sendText(jid, `❌ Comando administrativo não autorizado.
+
+Número detectado: ${phone}
+
+Adicione esse número na variável ADMIN_NUMBERS do Render, ou confira se está com DDI 55.`);
+  }
+
   if (isAdmin && adminDeliveryState.has(jid)) {
     if (['cancelar','menu','sair'].includes(lower)) {
       adminDeliveryState.delete(jid);
@@ -591,6 +621,7 @@ app.get('/admin/financeiro',auth,(req,res)=>{
 app.get('/admin/backup',auth,(req,res)=>{ const files=fs.readdirSync(BACKUP_DIR).filter(f=>f.endsWith('.db') || f.endsWith('.tar.gz')).sort().reverse(); const rows=files.map(f=>`<tr><td>${safe(f)}</td><td><a class="btn" href="/admin/backup/download/${encodeURIComponent(f)}">Baixar</a></td></tr>`).join(''); res.send(page('Backup',`<h1>💾 Backup</h1><div class="card"><p class="muted">Backup completo inclui banco de dados e imagens dos QR Codes. O sistema também cria backup automático a cada ${BACKUP_INTERVAL_HOURS} horas.</p><form method="post" action="/admin/backup"><button class="green">Criar backup completo agora</button></form></div><table><tr><th>Arquivo</th><th>Ação</th></tr>${rows}</table>`)); });
 app.post('/admin/backup',auth,(req,res)=>{ criarBackupCompleto('backup_manual'); res.redirect('/admin/backup'); });
 app.get('/admin/backup/download/:file',auth,(req,res)=>{ const f=path.basename(req.params.file); res.download(path.join(BACKUP_DIR,f)); });
+app.get('/admin/reset-whatsapp',auth,(req,res)=>{ fs.rmSync(AUTH_DIR,{recursive:true,force:true}); fs.mkdirSync(AUTH_DIR,{recursive:true}); res.send(page('Reset','<div class="card">Sessão apagada. Reinicie o serviço e abra /qr.</div>')); });
 app.post('/admin/reset-whatsapp',auth,(req,res)=>{ fs.rmSync(AUTH_DIR,{recursive:true,force:true}); fs.mkdirSync(AUTH_DIR,{recursive:true}); res.send(page('Reset','<div class="card">Sessão apagada. Reinicie o serviço e abra /qr.</div>')); });
 
 app.get('/webhook/pixgo', (req,res)=>res.status(200).send('Webhook PixGo online ✅'));
