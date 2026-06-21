@@ -82,3 +82,23 @@ NODE_VERSION=20.20.2
 ```
 
 Isso evita erro de compilação do better-sqlite3 no Node 26.
+
+## Atualização: saldo do cliente
+
+Esta versão adiciona:
+
+- Opção 4 no WhatsApp: Depositar saldo via PIX
+- Opção 5 no WhatsApp: Meu saldo
+- Compra com saldo no plano selecionado
+- Painel Admin > Clientes com botão para adicionar saldo manualmente
+- Webhook PixGo reconhece depósito e credita saldo automaticamente
+- Pedidos mostram tipo de pagamento: pix, saldo ou deposito
+
+Fluxo do cliente:
+
+1. Digita `menu`
+2. Escolhe `4` para depositar saldo ou `1` para comprar eSIM
+3. Ao selecionar um plano, pode escolher:
+   - `1` Gerar PIX
+   - `2` Comprar com saldo
+   - `3` Voltar

@@ -75,7 +75,7 @@ function isPaidStatus(s) { return ['paid','approved','completed','aprovado','pag
 function initDB() {
   db.exec(`
   CREATE TABLE IF NOT EXISTS configs (chave TEXT PRIMARY KEY, valor TEXT, atualizado_em TEXT DEFAULT CURRENT_TIMESTAMP);
-  CREATE TABLE IF NOT EXISTS clientes (id INTEGER PRIMARY KEY AUTOINCREMENT, telefone TEXT UNIQUE, nome TEXT, jid TEXT, criado_em TEXT DEFAULT CURRENT_TIMESTAMP);
+  CREATE TABLE IF NOT EXISTS clientes (id INTEGER PRIMARY KEY AUTOINCREMENT, telefone TEXT UNIQUE, nome TEXT, jid TEXT, saldo REAL DEFAULT 0, criado_em TEXT DEFAULT CURRENT_TIMESTAMP);
   CREATE TABLE IF NOT EXISTS produtos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     nome TEXT NOT NULL,
@@ -112,6 +112,7 @@ function initDB() {
     pixgo_id TEXT,
     qr_estoque_id INTEGER,
     entrega_manual_texto TEXT,
+    tipo_pagamento TEXT DEFAULT 'compra',
     criado_em TEXT DEFAULT CURRENT_TIMESTAMP,
     pago_em TEXT,
     entregue_em TEXT
@@ -122,6 +123,8 @@ function initDB() {
     total INTEGER DEFAULT 0,
     criado_em TEXT DEFAULT CURRENT_TIMESTAMP
   );`);
+  try { db.prepare('ALTER TABLE clientes ADD COLUMN saldo REAL DEFAULT 0').run(); } catch(e) {}
+  try { db.prepare("ALTER TABLE pedidos ADD COLUMN tipo_pagamento TEXT DEFAULT 'compra'").run(); } catch(e) {}
   const hash = getConfig('admin_hash');
   if (!hash) setConfig('admin_hash', bcrypt.hashSync(ADMIN_PASS, 10));
   const count = db.prepare('SELECT COUNT(*) c FROM produtos').get().c;
@@ -145,7 +148,7 @@ function upsertClient(phone, nome, jid) {
 }
 function estoqueProduto(pid) { return db.prepare("SELECT COUNT(*) c FROM estoque_qr WHERE produto_id=? AND status='DISPONIVEL'").get(pid).c; }
 function produtoComEstoque(pid) { const p = db.prepare('SELECT * FROM produtos WHERE id=? AND ativo=1').get(pid); if (!p) return null; p.estoque = estoqueProduto(pid); return p; }
-function menuPrincipal() { return `👋 Bem-vindo à *${LOJA_NOME}*\n\n1️⃣ Comprar eSIM\n2️⃣ Meus Pedidos\n3️⃣ Suporte\n\nDigite o número da opção.`; }
+function menuPrincipal(cliente=null) { const saldoTxt = cliente ? `\n💰 Saldo: *${brl(cliente.saldo || 0)}*` : ''; return `👋 Bem-vindo à *${LOJA_NOME}*${saldoTxt}\n\n1️⃣ Comprar eSIM\n2️⃣ Meus Pedidos\n3️⃣ Suporte\n4️⃣ Depositar saldo\n5️⃣ Meu saldo\n\nDigite o número da opção.`; }
 function listaPlanos() {
   const ps = db.prepare('SELECT * FROM produtos WHERE ativo=1 ORDER BY destaque DESC, id DESC').all();
   if (!ps.length) return '❌ Nenhum eSIM disponível no momento.';
@@ -234,7 +237,7 @@ async function tratarMensagem(msg) {
   const cliente = upsertClient(phone, msg.pushName || 'Cliente', jid);
   const state = userState.get(jid);
   const lower = text.toLowerCase();
-  if (['menu','oi','olá','ola','start','inicio','início','cancelar'].includes(lower)) { userState.delete(jid); return sendText(jid, menuPrincipal()); }
+  if (['menu','oi','olá','ola','start','inicio','início','cancelar'].includes(lower)) { userState.delete(jid); return sendText(jid, menuPrincipal(cliente)); }
   if (lower === '1' && !state) { userState.set(jid, { step: 'planos' }); return sendText(jid, listaPlanos()); }
   if (lower === '2' && !state) {
     const ps = db.prepare('SELECT * FROM pedidos WHERE cliente_id=? ORDER BY id DESC LIMIT 10').all(cliente.id);
@@ -249,49 +252,62 @@ async function tratarMensagem(msg) {
     if (produto.estoque <= 0 && !produto.permite_manual_sem_estoque) return sendText(jid, '❌ Esse plano está esgotado no momento.');
     userState.set(jid, { step: 'confirmar', produto_id: produto.id });
     const entrega = produto.estoque > 0 ? '✅ Entrega automática' : `⚠️ Entrega manual\n⏱ Prazo: ${PRAZO_MANUAL}`;
-    return sendText(jid, `📱 *Plano Selecionado*\n\n${produto.nome}\n📅 ${produto.validade || '30 dias'}\n💰 ${brl(produto.preco)}\n📦 Estoque: ${produto.estoque}\n${entrega}\n\n1️⃣ Gerar PIX\n2️⃣ Voltar`);
+    return sendText(jid, `📱 *Plano Selecionado*\n\n${produto.nome}\n📅 ${produto.validade || '30 dias'}\n💰 ${brl(produto.preco)}\n📦 Estoque: ${produto.estoque}\n${entrega}\n\n1️⃣ Gerar PIX\n2️⃣ Comprar com saldo\n3️⃣ Voltar`);
   }
   if (state?.step === 'confirmar') {
     const opcaoConfirmar = text.toLowerCase().trim();
-    const querVoltar = opcaoConfirmar === '2' || opcaoConfirmar.startsWith('2️⃣') || opcaoConfirmar.includes('voltar');
+    const querVoltar = opcaoConfirmar === '3' || opcaoConfirmar.startsWith('3️⃣') || opcaoConfirmar.includes('voltar');
+    const querSaldo = opcaoConfirmar === '2' || opcaoConfirmar.startsWith('2️⃣') || opcaoConfirmar.includes('saldo');
     const querPix = opcaoConfirmar === '1' || opcaoConfirmar.startsWith('1️⃣') || opcaoConfirmar.includes('gerar pix') || opcaoConfirmar.includes('pix') || opcaoConfirmar.includes('comprar');
     if (querVoltar) { userState.set(jid, { step: 'planos' }); return sendText(jid, listaPlanos()); }
-    if (!querPix) return sendText(jid, 'Digite *1* para gerar PIX ou *2* para voltar.');
+    if (!querPix && !querSaldo) return sendText(jid, 'Digite *1* para gerar PIX, *2* para comprar com saldo ou *3* para voltar.');
     const produto = produtoComEstoque(state.produto_id);
     if (!produto) { userState.delete(jid); return sendText(jid, '❌ Produto indisponível.'); }
     if (produto.estoque <= 0 && !produto.permite_manual_sem_estoque) return sendText(jid, '❌ Esse plano está esgotado no momento.');
+
+    if (querSaldo) {
+      const clienteAtual = db.prepare('SELECT * FROM clientes WHERE id=?').get(cliente.id);
+      const saldoAtual = Number(clienteAtual?.saldo || 0);
+      if (saldoAtual < Number(produto.preco)) {
+        const falta = Number(produto.preco) - saldoAtual;
+        return sendText(jid, `❌ Saldo insuficiente.\n\n💰 Seu saldo: *${brl(saldoAtual)}*\n📱 Produto: *${brl(produto.preco)}*\nFalta: *${brl(falta)}*\n\nDigite *4* no menu para depositar saldo ou escolha *1* para pagar direto no PIX.`);
+      }
+      const external_ref = String(Date.now()) + '_' + uuidv4();
+      const tx = db.transaction(() => {
+        db.prepare('UPDATE clientes SET saldo = saldo - ? WHERE id=?').run(Number(produto.preco), cliente.id);
+        const info = db.prepare(`INSERT INTO pedidos(external_ref,cliente_id,cliente_nome,cliente_telefone,cliente_jid,produto_id,produto_nome,valor,status,tipo_pagamento,pago_em) VALUES(?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`)
+          .run(external_ref, cliente.id, cliente.nome, cliente.telefone, jid, produto.id, produto.nome, produto.preco, 'PAGO', 'saldo');
+        return info.lastInsertRowid;
+      });
+      const pedidoId = tx();
+      userState.delete(jid);
+      const novoSaldo = db.prepare('SELECT saldo FROM clientes WHERE id=?').get(cliente.id).saldo;
+      await sendText(jid, `✅ Compra aprovada com saldo!\n\n📦 Pedido #${pedidoId}\n📱 ${produto.nome}\n💰 Valor: ${brl(produto.preco)}\n💵 Saldo restante: ${brl(novoSaldo)}\n\nPreparando entrega...`);
+      await notifyAdmins(`💰 *COMPRA COM SALDO*\n\nPedido: #${pedidoId}\nCliente: ${cliente.telefone}\nPlano: ${produto.nome}\nValor: ${brl(produto.preco)}`);
+      await entregarPedido(pedidoId);
+      return;
+    }
+
     const external_ref = String(Date.now()) + '_' + uuidv4();
-    const info = db.prepare('INSERT INTO pedidos(external_ref,cliente_id,cliente_nome,cliente_telefone,cliente_jid,produto_id,produto_nome,valor,status) VALUES(?,?,?,?,?,?,?,?,"PENDENTE")')
-      .run(external_ref, cliente.id, cliente.nome, cliente.telefone, jid, produto.id, produto.nome, produto.preco);
+    const info = db.prepare(`INSERT INTO pedidos(external_ref,cliente_id,cliente_nome,cliente_telefone,cliente_jid,produto_id,produto_nome,valor,status,tipo_pagamento) VALUES(?,?,?,?,?,?,?,?,?,?)`)
+      .run(external_ref, cliente.id, cliente.nome, cliente.telefone, jid, produto.id, produto.nome, produto.preco, 'PENDENTE', 'pix');
     const pedido = db.prepare('SELECT * FROM pedidos WHERE id=?').get(info.lastInsertRowid);
     userState.delete(jid);
     await sendText(jid, `💰 Gerando PIX...\n\nProduto: ${produto.nome}\nValor: ${brl(produto.preco)}`);
     try {
       const copia = await createPix(pedido, produto);
       if (!copia) return sendText(jid, '❌ Pix gerado, mas não recebi o copia e cola. Chame o suporte.');
-      await sendText(jid, `✅ *PIX GERADO*
-
-📦 Pedido #${pedido.id}
-📱 ${produto.nome}
-💰 ${brl(produto.preco)}
-
-📋 O código PIX copia e cola será enviado na próxima mensagem.
-
-⏳ Após pagar, a entrega será automática ou manual conforme estoque.`);
+      await sendText(jid, `✅ *PIX GERADO*\n\n📦 Pedido #${pedido.id}\n📱 ${produto.nome}\n💰 ${brl(produto.preco)}\n\n📋 O código PIX copia e cola será enviado na próxima mensagem.\n\n⏳ Após pagar, a entrega será automática ou manual conforme estoque.`);
       await sendText(jid, `${copia}`);
       await notifyAdmins(`🛒 *NOVA VENDA INICIADA*\n\nPedido: #${pedido.id}\nCliente: ${cliente.telefone}\nPlano: ${produto.nome}\nValor: ${brl(produto.preco)}`);
     } catch(e) {
       console.log('ERRO PIXGO:', e.response?.data || e.responseData || e.message);
-      db.prepare('UPDATE pedidos SET status="ERRO_PIX" WHERE id=?').run(pedido.id);
-      await sendText(jid, `❌ Erro ao gerar PIX.
-
-Motivo: ${e.message}
-
-Confira PIXGO_API_KEY, BASE_URL e PIXGO_URL no Render.`);
+      db.prepare('UPDATE pedidos SET status=? WHERE id=?').run('ERRO_PIX', pedido.id);
+      await sendText(jid, `❌ Erro ao gerar PIX.\n\nMotivo: ${e.message}\n\nConfira PIXGO_API_KEY, BASE_URL e PIXGO_URL no Render.`);
     }
     return;
   }
-  return sendText(jid, menuPrincipal());
+  return sendText(jid, menuPrincipal(cliente));
 }
 
 async function startWhatsApp() {
@@ -336,12 +352,16 @@ app.get('/admin/estoque',auth,(req,res)=>{ const ps=db.prepare('SELECT * FROM pr
 app.post('/admin/estoque',auth,upload.single('qr'),(req,res)=>{ const arquivo=req.file?req.file.filename:''; db.prepare('INSERT INTO estoque_qr(produto_id,arquivo,codigo_texto,status) VALUES(?,?,?,"DISPONIVEL")').run(req.body.produto_id,arquivo,req.body.codigo_texto||''); res.redirect('/admin/estoque'); });
 app.post('/admin/estoque/:id/apagar',auth,(req,res)=>{ const e=db.prepare('SELECT * FROM estoque_qr WHERE id=?').get(req.params.id); if(e?.arquivo){ try{fs.unlinkSync(path.join(UPLOAD_DIR,path.basename(e.arquivo)))}catch{} } db.prepare('DELETE FROM estoque_qr WHERE id=?').run(req.params.id); res.redirect('/admin/estoque'); });
 
-app.get('/admin/pedidos',auth,(req,res)=>{ const status=req.query.status; const rows=(status?db.prepare('SELECT * FROM pedidos WHERE status=? ORDER BY id DESC LIMIT 500').all(status):db.prepare('SELECT * FROM pedidos ORDER BY id DESC LIMIT 500').all()).map(p=>`<tr><td>#${p.id}</td><td>${safe(p.cliente_nome||'-')}<br>${safe(p.cliente_telefone||'-')}</td><td>${safe(p.produto_nome)}</td><td>${brl(p.valor)}</td><td><span class="pill">${safe(p.status)}</span></td><td><a class="btn green" href="/admin/pedidos/${p.id}/entregar">Entregar</a><form style="display:inline" method="post" action="/admin/pedidos/${p.id}/cancelar"><button class="red">Cancelar</button></form></td></tr>`).join(''); res.send(page('Pedidos',`<h1>📋 Pedidos</h1><div class="card"><table><tr><th>ID</th><th>Cliente</th><th>Produto</th><th>Valor</th><th>Status</th><th>Ações</th></tr>${rows}</table></div>`)); });
+app.get('/admin/pedidos',auth,(req,res)=>{ const status=req.query.status; const rows=(status?db.prepare('SELECT * FROM pedidos WHERE status=? ORDER BY id DESC LIMIT 500').all(status):db.prepare('SELECT * FROM pedidos ORDER BY id DESC LIMIT 500').all()).map(p=>`<tr><td>#${p.id}</td><td>${safe(p.cliente_nome||'-')}<br>${safe(p.cliente_telefone||'-')}</td><td>${safe(p.produto_nome)}</td><td>${brl(p.valor)}</td><td><span class="pill">${safe(p.status)}</span></td><td>${safe(p.tipo_pagamento || 'compra')}</td><td><a class="btn green" href="/admin/pedidos/${p.id}/entregar">Entregar</a><form style="display:inline" method="post" action="/admin/pedidos/${p.id}/cancelar"><button class="red">Cancelar</button></form></td></tr>`).join(''); res.send(page('Pedidos',`<h1>📋 Pedidos</h1><div class="card"><table><tr><th>ID</th><th>Cliente</th><th>Produto</th><th>Valor</th><th>Status</th><th>Tipo</th><th>Ações</th></tr>${rows}</table></div>`)); });
 app.get('/admin/pedidos/:id/entregar',auth,(req,res)=>{ const p=db.prepare('SELECT * FROM pedidos WHERE id=?').get(req.params.id); res.send(page('Entregar',`<h1>📤 Entregar pedido #${safe(req.params.id)}</h1><div class="card"><form method="post" enctype="multipart/form-data"><textarea name="texto" rows="8">✅ Seu eSIM foi liberado!\n\nPedido #${p?.id||''}\nPlano: ${safe(p?.produto_nome||'')}</textarea><input type="file" name="qr" accept="image/*"><button class="green">Enviar ao cliente</button></form></div>`)); });
 app.post('/admin/pedidos/:id/entregar',auth,upload.single('qr'),async(req,res)=>{ await entregarPedido(Number(req.params.id), req.body.texto||'', req.file?path.join(UPLOAD_DIR,req.file.filename):''); res.redirect('/admin/pedidos'); });
 app.post('/admin/pedidos/:id/cancelar',auth,(req,res)=>{ db.prepare('UPDATE pedidos SET status="CANCELADO" WHERE id=?').run(req.params.id); res.redirect('/admin/pedidos'); });
 
-app.get('/admin/clientes',auth,(req,res)=>{ const rows=db.prepare('SELECT * FROM clientes ORDER BY id DESC LIMIT 500').all().map(c=>`<tr><td>#${c.id}</td><td>${safe(c.nome)}</td><td>${safe(c.telefone)}</td><td>${safe(c.criado_em)}</td></tr>`).join(''); res.send(page('Clientes',`<h1>👥 Clientes</h1><div class="card"><table><tr><th>ID</th><th>Nome</th><th>Telefone</th><th>Criado</th></tr>${rows}</table></div>`)); });
+app.get('/admin/clientes',auth,(req,res)=>{ const rows=db.prepare('SELECT * FROM clientes ORDER BY id DESC LIMIT 500').all().map(c=>`<tr><td>#${c.id}</td><td>${safe(c.nome)}</td><td>${safe(c.telefone)}</td><td>${brl(c.saldo || 0)}</td><td>${safe(c.criado_em)}</td><td><form method="post" action="/admin/clientes/saldo" style="display:flex;gap:6px;align-items:center"><input type="hidden" name="id" value="${c.id}"><input name="valor" placeholder="Valor" style="max-width:90px;margin:0"><button class="green">Add saldo</button></form></td></tr>`).join(''); res.send(page('Clientes',`<h1>👥 Clientes</h1><div class="card"><p class="muted">Adicione saldo manual para cliente comprar com saldo no WhatsApp.</p><table><tr><th>ID</th><th>Nome</th><th>Telefone</th><th>Saldo</th><th>Criado</th><th>Ação</th></tr>${rows}</table></div>`)); });
+app.post('/admin/clientes/saldo',auth,async(req,res)=>{ const id=Number(req.body.id); const valor=Number(String(req.body.valor||'0').replace(',','.')); if(id && valor){ db.prepare('UPDATE clientes SET saldo = saldo + ? WHERE id=?').run(valor,id); const c=db.prepare('SELECT * FROM clientes WHERE id=?').get(id); if(c) await sendText(c.jid || phoneToJid(c.telefone), `💰 Saldo adicionado!
+
+Valor: *${brl(valor)}*
+Saldo atual: *${brl(c.saldo || 0)}*`); } res.redirect('/admin/clientes'); });
 app.get('/admin/mensagem',auth,(req,res)=>res.send(page('Mensagem',`<h1>📢 Mensagem em massa</h1><div class="card"><form method="post"><textarea name="texto" rows="8" placeholder="Mensagem para clientes"></textarea><button class="orange">Enviar para todos</button></form></div>`)));
 app.post('/admin/mensagem',auth,async(req,res)=>{ const texto=String(req.body.texto||'').trim(); if(texto){ const cs=db.prepare('SELECT * FROM clientes').all(); let ok=0; for(const c of cs){ if(await sendText(c.jid||phoneToJid(c.telefone), texto)) ok++; } db.prepare('INSERT INTO mensagens_salvas(texto,total) VALUES(?,?)').run(texto,ok); } res.redirect('/admin/mensagem'); });
 app.get('/admin/senha',auth,(req,res)=>res.send(page('Senha',`<h1>🔐 Alterar senha</h1><div class="card"><form method="post"><input name="nova" type="password" placeholder="Nova senha"><button>Salvar</button></form></div>`)));
