@@ -51,3 +51,18 @@ O backup completo salva:
 - pasta de QR Codes `uploads_esim`
 
 Também cria backup automático conforme `BACKUP_INTERVAL_HOURS`.
+
+## Imagem do menu pelo painel
+
+Agora você pode trocar a imagem do menu diretamente pelo painel:
+
+```txt
+/admin/menu-imagem
+```
+
+Opções disponíveis:
+- Enviar imagem direto do painel
+- Usar link de imagem
+- Remover imagem do menu
+
+A imagem será enviada quando o cliente digitar: oi, menu, olá, start ou cancelar.

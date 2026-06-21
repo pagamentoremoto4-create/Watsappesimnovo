@@ -35,7 +35,7 @@ const ADMIN_NUMBERS = String(process.env.ADMIN_NUMBERS || '').split(',').map(onl
 const SUPORTE_WHATSAPP = onlyDigits(process.env.SUPORTE_WHATSAPP || ADMIN_NUMBERS[0] || '');
 const ESTOQUE_BAIXO = Number(process.env.ESTOQUE_BAIXO || 2);
 const PRAZO_MANUAL = process.env.PRAZO_MANUAL || 'até 30 minutos';
-const MENU_IMAGE_URL = process.env.MENU_IMAGE_URL || '';
+const DEFAULT_MENU_IMAGE_URL = process.env.MENU_IMAGE_URL || '';
 const BACKUP_INTERVAL_HOURS = Number(process.env.BACKUP_INTERVAL_HOURS || 6);
 const BACKUP_KEEP = Number(process.env.BACKUP_KEEP || 30);
 
@@ -196,9 +196,20 @@ function iniciarBackupAutomatico() {
 }
 async function sendMenu(to, cliente) {
   const texto = menuPrincipal(cliente);
-  if (MENU_IMAGE_URL) {
-    try { await sock.sendMessage(to, { image: { url: MENU_IMAGE_URL }, caption: texto }); return true; }
-    catch(e) { console.log('Erro enviar imagem menu:', e.message); }
+  const menuFile = getConfig('menu_image_file', '');
+  const menuUrl = getConfig('menu_image_url', DEFAULT_MENU_IMAGE_URL);
+
+  if (menuFile) {
+    const filePath = path.join(UPLOAD_DIR, path.basename(menuFile));
+    if (fs.existsSync(filePath)) {
+      try { await sock.sendMessage(to, { image: fs.readFileSync(filePath), caption: texto }); return true; }
+      catch(e) { console.log('Erro enviar imagem menu local:', e.message); }
+    }
+  }
+
+  if (menuUrl) {
+    try { await sock.sendMessage(to, { image: { url: menuUrl }, caption: texto }); return true; }
+    catch(e) { console.log('Erro enviar imagem menu URL:', e.message); }
   }
   return sendText(to, texto);
 }
@@ -423,7 +434,7 @@ async function startWhatsApp() {
 function page(title, body) {
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${safe(title)}</title><style>
   body{margin:0;background:#07111f;color:#eaf0f8;font-family:Arial,sans-serif}.layout{display:grid;grid-template-columns:250px 1fr;min-height:100vh}.side{background:#09101f;padding:18px;border-right:1px solid #24324b}.brand{font-weight:900;font-size:21px;margin-bottom:20px}.side a{display:block;color:#dbeafe;text-decoration:none;padding:11px;border-radius:12px;margin:5px 0}.side a:hover{background:#13223a}.main{padding:22px}.card{background:#101b31;border:1px solid #24324b;border-radius:18px;padding:16px;margin:14px 0;box-shadow:0 14px 35px rgba(0,0,0,.25)}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.metric h1{margin:0;font-size:30px}.metric p{color:#97a6ba}input,select,textarea{width:100%;padding:11px;border-radius:12px;border:1px solid #334155;background:#08111f;color:white;margin:6px 0 12px}.btn,button{background:#2563eb;color:white;border:0;border-radius:11px;padding:9px 13px;text-decoration:none;font-weight:bold;display:inline-block;margin:2px;cursor:pointer}.green{background:#16a34a}.red{background:#dc2626}.orange{background:#ea580c}.muted{color:#97a6ba}table{width:100%;border-collapse:collapse;background:#08111f;border-radius:14px;overflow:hidden}td,th{padding:10px;border-bottom:1px solid #24324b;text-align:left}th{background:#13223a}.pill{padding:5px 9px;border-radius:999px;background:#1e40af;font-weight:bold}@media(max-width:800px){.layout{grid-template-columns:1fr}.side{position:relative}.main{padding:14px}}
-  </style></head><body><div class="layout"><div class="side"><div class="brand">📱 Centralunlocker</div><a href="/admin">📊 Dashboard</a><a href="/admin/produtos">📦 Produtos</a><a href="/admin/estoque">📥 Estoque QR</a><a href="/admin/pedidos">📋 Pedidos</a><a href="/admin/pedidos?status=AGUARDANDO_ENVIO">🟡 Pedidos Manuais</a><a href="/admin/clientes">👥 Clientes</a><a href="/admin/mensagem">📢 Mensagem</a><a href="/admin/backup">💾 Backup</a><a href="/admin/financeiro">💵 Financeiro</a><a href="/qr">🔳 QR WhatsApp</a><a href="/admin/senha">🔐 Alterar senha</a><a href="/admin/logout">🚪 Sair</a></div><div class="main">${body}</div></div></body></html>`;
+  </style></head><body><div class="layout"><div class="side"><div class="brand">📱 Centralunlocker</div><a href="/admin">📊 Dashboard</a><a href="/admin/produtos">📦 Produtos</a><a href="/admin/estoque">📥 Estoque QR</a><a href="/admin/pedidos">📋 Pedidos</a><a href="/admin/pedidos?status=AGUARDANDO_ENVIO">🟡 Pedidos Manuais</a><a href="/admin/clientes">👥 Clientes</a><a href="/admin/mensagem">📢 Mensagem</a><a href="/admin/menu-imagem">🖼️ Imagem do Menu</a><a href="/admin/backup">💾 Backup</a><a href="/admin/financeiro">💵 Financeiro</a><a href="/qr">🔳 QR WhatsApp</a><a href="/admin/senha">🔐 Alterar senha</a><a href="/admin/logout">🚪 Sair</a></div><div class="main">${body}</div></div></body></html>`;
 }
 
 app.get('/', (req,res)=>res.redirect('/admin'));
@@ -455,6 +466,29 @@ Valor: *${brl(valor)}*
 Saldo atual: *${brl(c.saldo || 0)}*`); } res.redirect('/admin/clientes'); });
 app.get('/admin/mensagem',auth,(req,res)=>res.send(page('Mensagem',`<h1>📢 Mensagem em massa</h1><div class="card"><form method="post"><textarea name="texto" rows="8" placeholder="Mensagem para clientes"></textarea><button class="orange">Enviar para todos</button></form></div>`)));
 app.post('/admin/mensagem',auth,async(req,res)=>{ const texto=String(req.body.texto||'').trim(); if(texto){ const cs=db.prepare('SELECT * FROM clientes').all(); let ok=0; for(const c of cs){ if(await sendText(c.jid||phoneToJid(c.telefone), texto)) ok++; } db.prepare('INSERT INTO mensagens_salvas(texto,total) VALUES(?,?)').run(texto,ok); } res.redirect('/admin/mensagem'); });
+
+app.get('/admin/menu-imagem',auth,(req,res)=>{
+  const menuFile = getConfig('menu_image_file','');
+  const menuUrl = getConfig('menu_image_url', DEFAULT_MENU_IMAGE_URL);
+  let preview = '<p class="muted">Nenhuma imagem configurada ainda.</p>';
+  if (menuFile) preview = `<img src="/files/${encodeURIComponent(path.basename(menuFile))}" style="max-width:420px;width:100%;border-radius:14px">`;
+  else if (menuUrl) preview = `<img src="${safe(menuUrl)}" style="max-width:420px;width:100%;border-radius:14px">`;
+  res.send(page('Imagem do Menu',`<h1>🖼️ Imagem do Menu</h1><div class="card"><h2>Imagem atual</h2>${preview}<p class="muted">Essa imagem será enviada quando o cliente digitar oi, menu, olá, start ou cancelar.</p></div><div class="card"><h2>Enviar imagem pelo painel</h2><form method="post" enctype="multipart/form-data"><input type="file" name="menu_image" accept="image/*"><button class="green">Salvar imagem</button></form></div><div class="card"><h2>Ou usar link da imagem</h2><form method="post"><input name="menu_url" placeholder="https://.../banner.png" value="${safe(menuUrl)}"><button>Salvar link</button></form></div><div class="card"><form method="post"><input type="hidden" name="remover" value="1"><button class="red">Remover imagem do menu</button></form></div>`));
+});
+app.post('/admin/menu-imagem',auth,upload.single('menu_image'),(req,res)=>{
+  if (req.body.remover) {
+    setConfig('menu_image_file','');
+    setConfig('menu_image_url','');
+  } else if (req.file) {
+    setConfig('menu_image_file', req.file.filename);
+    setConfig('menu_image_url','');
+  } else if (req.body.menu_url !== undefined) {
+    setConfig('menu_image_url', String(req.body.menu_url || '').trim());
+    setConfig('menu_image_file','');
+  }
+  res.redirect('/admin/menu-imagem');
+});
+
 app.get('/admin/senha',auth,(req,res)=>res.send(page('Senha',`<h1>🔐 Alterar senha</h1><div class="card"><form method="post"><input name="nova" type="password" placeholder="Nova senha"><button>Salvar</button></form></div>`)));
 app.post('/admin/senha',auth,(req,res)=>{ if(req.body.nova) setConfig('admin_hash',bcrypt.hashSync(req.body.nova,10)); res.redirect('/admin'); });
 
