@@ -43,11 +43,6 @@ const BACKUP_KEEP = Number(process.env.BACKUP_KEEP || 30);
 for (const dir of [DATA_DIR, UPLOAD_DIR, AUTH_DIR, BACKUP_DIR]) fs.mkdirSync(dir, { recursive: true });
 
 const app = express();
-app.use((req, res, next) => {
-  req.setTimeout(30000);
-  res.setTimeout(30000);
-  next();
-});
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 app.use(express.json({ limit: '20mb' }));
 app.use('/files', express.static(UPLOAD_DIR));
@@ -67,14 +62,9 @@ const upload = multer({
 
 const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
-db.pragma('busy_timeout = 10000');
-db.pragma('synchronous = NORMAL');
-db.pragma('temp_store = MEMORY');
 let sock = null;
 let qrBase64 = null;
 let conectado = false;
-let whatsappStarting = false;
-let reconnectTimer = null;
 const userState = new Map();
 const adminDeliveryState = new Map();
 
@@ -202,26 +192,8 @@ function getConfig(k, def='') { const r = db.prepare('SELECT valor FROM configs 
 function setConfig(k, v) { db.prepare('INSERT OR REPLACE INTO configs(chave,valor,atualizado_em) VALUES(?,?,CURRENT_TIMESTAMP)').run(k, String(v)); }
 function auth(req,res,next){ if(req.session.admin) return next(); res.redirect('/admin/login'); }
 
-async function sendText(to, text) {
-  if (!sock) return false;
-  try {
-    await Promise.race([
-      sock.sendMessage(to, { text }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout envio texto')), 15000))
-    ]);
-    return true;
-  } catch(e) { console.log('Erro enviar texto:', e.message); return false; }
-}
-async function sendImage(to, filePath, caption='') {
-  if (!sock || !fs.existsSync(filePath)) return false;
-  try {
-    await Promise.race([
-      sock.sendMessage(to, { image: fs.readFileSync(filePath), caption }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout envio imagem')), 20000))
-    ]);
-    return true;
-  } catch(e) { console.log('Erro enviar imagem:', e.message); return false; }
-}
+async function sendText(to, text) { if (!sock) return false; try { await sock.sendMessage(to, { text }); return true; } catch(e) { console.log('Erro enviar texto:', e.message); return false; } }
+async function sendImage(to, filePath, caption='') { if (!sock || !fs.existsSync(filePath)) return false; try { await sock.sendMessage(to, { image: fs.readFileSync(filePath), caption }); return true; } catch(e) { console.log('Erro enviar imagem:', e.message); return false; } }
 async function notifyAdmins(text) { for (const n of ADMIN_NUMBERS) await sendText(phoneToJid(n), text); }
 
 function limparBackupsAntigos() {
@@ -381,7 +353,6 @@ async function entregarPedido(pedidoId, manualTexto='', manualArquivo='') {
 }
 
 async function tratarMensagem(msg) {
-  console.log('MSG RECEBIDA:', msg?.key?.remoteJid, getText(msg));
   const jid = msg.key.remoteJid;
   if (!jid || jid.endsWith('@g.us') || msg.key.fromMe || jid === 'status@broadcast') return;
   const text = getText(msg).trim();
@@ -543,116 +514,32 @@ async function tratarMensagem(msg) {
 }
 
 async function startWhatsApp() {
-  if (whatsappStarting) {
-    console.log('Start WhatsApp ignorado: conexão já está iniciando.');
-    return;
-  }
-  if (sock && conectado) {
-    console.log('Start WhatsApp ignorado: já conectado.');
-    return;
-  }
-  whatsappStarting = true;
-  try {
-    const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
-    const { version } = await fetchLatestBaileysVersion();
-
-    try { sock?.ev?.removeAllListeners?.(); } catch {}
-    try { sock?.ws?.close?.(); } catch {}
-
-    sock = makeWASocket({
-      version,
-      auth: state,
-      logger: pino({ level: 'silent' }),
-      printQRInTerminal: false,
-      connectTimeoutMs: 60000,
-      defaultQueryTimeoutMs: 60000,
-      keepAliveIntervalMs: 30000
-    });
-
-    sock.ev.on('creds.update', saveCreds);
-    sock.ev.on('connection.update', async (u) => {
-      const { connection, lastDisconnect, qr } = u;
-
-      if (qr) {
-        qrBase64 = await QRCode.toDataURL(qr);
-        conectado = false;
-        console.log('QR WhatsApp atualizado. Abra /qr');
-      }
-
-      if (connection === 'open') {
-        conectado = true;
-        whatsappStarting = false;
-        qrBase64 = null;
-        console.log('WhatsApp conectado.');
-      }
-
-      if (connection === 'close') {
-        sock = null;
-        conectado = false;
-        whatsappStarting = false;
-        conectado = false;
-        whatsappStarting = false;
-        const code = lastDisconnect?.error?.output?.statusCode;
-        console.log('WhatsApp conexão fechada. Código:', code || 'sem código');
-
-        if (code !== DisconnectReason.loggedOut) {
-          if (reconnectTimer) clearTimeout(reconnectTimer);
-          reconnectTimer = setTimeout(() => {
-            reconnectTimer = null;
-            startWhatsApp().catch(e => console.log('Erro reconectar WhatsApp:', e.message));
-          }, 8000);
-        } else {
-          console.log('Sessão desconectada. Abra /admin/whatsapp e clique para resetar.');
-        }
-      }
-    });
-
-    sock.ev.on('messages.upsert', async ({ messages }) => {
-      for (const m of messages) {
-        try {
-          await tratarMensagem(m);
-        } catch(e) {
-          console.log('Erro mensagem:', e?.message || e);
-        }
-      }
-    });
-  } catch (e) {
-    whatsappStarting = false;
-    console.log('Erro iniciar WhatsApp:', e.message);
-    if (reconnectTimer) clearTimeout(reconnectTimer);
-    reconnectTimer = setTimeout(() => {
-      reconnectTimer = null;
-      startWhatsApp().catch(err => console.log('Erro reconectar WhatsApp:', err.message));
-    }, 10000);
-  }
+  const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+  const { version } = await fetchLatestBaileysVersion();
+  sock = makeWASocket({ version, auth: state, logger: pino({ level: 'silent' }), printQRInTerminal: false });
+  sock.ev.on('creds.update', saveCreds);
+  sock.ev.on('connection.update', async (u) => {
+    const { connection, lastDisconnect, qr } = u;
+    if (qr) { qrBase64 = await QRCode.toDataURL(qr); conectado = false; console.log('QR WhatsApp atualizado. Abra /qr'); }
+    if (connection === 'open') { conectado = true; qrBase64 = null; console.log('WhatsApp conectado.'); }
+    if (connection === 'close') {
+      conectado = false;
+      const code = lastDisconnect?.error?.output?.statusCode;
+      if (code !== DisconnectReason.loggedOut) startWhatsApp();
+      else console.log('Sessão desconectada. Use /admin/reset-whatsapp.');
+    }
+  });
+  sock.ev.on('messages.upsert', async ({ messages }) => { for (const m of messages) { try { await tratarMensagem(m); } catch(e) { console.log('Erro mensagem:', e.message); } } });
 }
 
 function page(title, body) {
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${safe(title)}</title><style>
   body{margin:0;background:#07111f;color:#eaf0f8;font-family:Arial,sans-serif}.layout{display:grid;grid-template-columns:250px 1fr;min-height:100vh}.side{background:#09101f;padding:18px;border-right:1px solid #24324b}.brand{font-weight:900;font-size:21px;margin-bottom:20px}.side a{display:block;color:#dbeafe;text-decoration:none;padding:11px;border-radius:12px;margin:5px 0}.side a:hover{background:#13223a}.main{padding:22px}.card{background:#101b31;border:1px solid #24324b;border-radius:18px;padding:16px;margin:14px 0;box-shadow:0 14px 35px rgba(0,0,0,.25)}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.metric h1{margin:0;font-size:30px}.metric p{color:#97a6ba}input,select,textarea{width:100%;padding:11px;border-radius:12px;border:1px solid #334155;background:#08111f;color:white;margin:6px 0 12px}.btn,button{background:#2563eb;color:white;border:0;border-radius:11px;padding:9px 13px;text-decoration:none;font-weight:bold;display:inline-block;margin:2px;cursor:pointer}.green{background:#16a34a}.red{background:#dc2626}.orange{background:#ea580c}.muted{color:#97a6ba}table{width:100%;border-collapse:collapse;background:#08111f;border-radius:14px;overflow:hidden}td,th{padding:10px;border-bottom:1px solid #24324b;text-align:left}th{background:#13223a}.pill{padding:5px 9px;border-radius:999px;background:#1e40af;font-weight:bold}@media(max-width:800px){.layout{grid-template-columns:1fr}.side{position:relative}.main{padding:14px}}
-  </style></head><body><div class="layout"><div class="side"><div class="brand">📱 Centralunlocker</div><a href="/admin">📊 Dashboard</a><a href="/admin/produtos">📦 Produtos</a><a href="/admin/estoque">📥 Estoque QR</a><a href="/admin/pedidos">📋 Pedidos</a><a href="/admin/pedidos?status=AGUARDANDO_ENVIO">🟡 Pedidos Manuais</a><a href="/admin/clientes">👥 Clientes</a><a href="/admin/mensagem">📢 Mensagem</a><a href="/admin/menu-imagem">🖼️ Imagem do Menu</a><a href="/admin/backup">💾 Backup</a><a href="/admin/financeiro">💵 Financeiro</a><a href="/admin/whatsapp">🔳 QR WhatsApp</a><a href="/admin/senha">🔐 Alterar senha</a><a href="/admin/logout">🚪 Sair</a></div><div class="main">${body}</div></div></body></html>`;
+  </style></head><body><div class="layout"><div class="side"><div class="brand">📱 Centralunlocker</div><a href="/admin">📊 Dashboard</a><a href="/admin/produtos">📦 Produtos</a><a href="/admin/estoque">📥 Estoque QR</a><a href="/admin/pedidos">📋 Pedidos</a><a href="/admin/pedidos?status=AGUARDANDO_ENVIO">🟡 Pedidos Manuais</a><a href="/admin/clientes">👥 Clientes</a><a href="/admin/mensagem">📢 Mensagem</a><a href="/admin/menu-imagem">🖼️ Imagem do Menu</a><a href="/admin/backup">💾 Backup</a><a href="/admin/financeiro">💵 Financeiro</a><a href="/qr">🔳 QR WhatsApp</a><a href="/admin/senha">🔐 Alterar senha</a><a href="/admin/logout">🚪 Sair</a></div><div class="main">${body}</div></div></body></html>`;
 }
 
 app.get('/', (req,res)=>res.redirect('/admin'));
-function qrWhatsappHtml(msg='') {
-  return `<h1>🔳 QR WhatsApp</h1>
-  ${msg ? `<div class="card"><b>${safe(msg)}</b></div>` : ''}
-  <div class="card">
-    <p>Status: <b>${conectado ? 'Conectado ✅' : 'Aguardando QR'}</b></p>
-    ${qrBase64 ? `<img src="${qrBase64}" style="max-width:320px;width:100%;background:white;padding:10px;border-radius:12px">` : '<p>Se não aparecer QR, clique em <b>Gerar novo QR</b> e aguarde alguns segundos.</p>'}
-    <p class="muted">Esta função apaga somente a sessão do WhatsApp. Não apaga banco, clientes, pedidos, saldo, estoque, imagens nem backups.</p>
-  </div>
-  <div class="card">
-    <h2>Reconectar WhatsApp</h2>
-    <form method="post" action="/admin/reset-whatsapp" onsubmit="return confirm('Apagar somente a sessão do WhatsApp e gerar QR novo?')">
-      <button class="red">🗑 Apagar sessão antiga e gerar novo QR</button>
-    </form>
-    <br>
-    <a class="btn" href="/qr">🔄 Atualizar QR</a>
-  </div>`;
-}
-app.get('/qr', auth, async (req,res)=>res.send(page('QR WhatsApp', qrWhatsappHtml())));
-app.get('/admin/whatsapp', auth, async (req,res)=>res.send(page('QR WhatsApp', qrWhatsappHtml())));
+app.get('/qr', async (req,res)=>res.send(page('QR WhatsApp', `<h1>🔳 QR WhatsApp</h1><div class="card"><p>Status: <b>${conectado ? 'Conectado' : 'Aguardando QR'}</b></p>${qrBase64 ? `<img src="${qrBase64}" style="max-width:320px;width:100%">` : '<p>Se não aparecer QR, reinicie ou aguarde alguns segundos.</p>'}</div>`)));
 app.get('/admin/login',(req,res)=>res.send(page('Login',`<div class="card" style="max-width:420px"><h1>Login Admin</h1><form method="post"><input name="user" placeholder="Usuário"><input name="pass" type="password" placeholder="Senha"><button>Entrar</button></form></div>`)));
 app.post('/admin/login',(req,res)=>{ const ok=req.body.user===ADMIN_USER && bcrypt.compareSync(req.body.pass||'', getConfig('admin_hash')); if(!ok) return res.send(page('Erro','<div class="card">Login inválido.</div>')); req.session.admin=true; res.redirect('/admin'); });
 app.get('/admin/logout',(req,res)=>req.session.destroy(()=>res.redirect('/admin/login')));
@@ -664,46 +551,22 @@ app.get('/admin/produtos/:id/editar',auth,(req,res)=>{ const p=db.prepare('SELEC
 app.post('/admin/produtos/:id/editar',auth,(req,res)=>{ db.prepare('UPDATE produtos SET nome=?,gb=?,validade=?,preco=?,descricao=?,destaque=?,ativo=?,permite_manual_sem_estoque=? WHERE id=?').run(req.body.nome,req.body.gb||'',req.body.validade||'',Number(String(req.body.preco).replace(',','.')),req.body.descricao||'',req.body.destaque?1:0,req.body.ativo?1:0,req.body.manual?1:0,req.params.id); res.redirect('/admin/produtos'); });
 app.post('/admin/produtos/:id/apagar',auth,(req,res)=>{ db.prepare('UPDATE produtos SET ativo=0 WHERE id=?').run(req.params.id); res.redirect('/admin/produtos'); });
 
-app.get('/admin/estoque',auth,(req,res)=>{ const ps=db.prepare('SELECT * FROM produtos WHERE ativo=1 ORDER BY nome').all(); const opts=ps.map(p=>`<option value="${p.id}">${safe(p.nome)} - estoque ${estoqueProduto(p.id)}</option>`).join(''); const rows=db.prepare('SELECT e.*,p.nome produto FROM estoque_qr e LEFT JOIN produtos p ON p.id=e.produto_id ORDER BY e.id DESC LIMIT 100').all().map(e=>`<tr><td>#${e.id}</td><td>${safe(e.produto)}</td><td><span class="pill">${safe(e.status)}</span></td><td>${e.arquivo?`<a href="/files/${encodeURIComponent(path.basename(e.arquivo))}" target="_blank">Ver QR</a>`:'Texto'}</td><td>${e.pedido_id||'-'}</td><td><form method="post" action="/admin/estoque/${e.id}/apagar" onsubmit="return confirm('Apagar QR?')"><button class="red">Apagar</button></form></td></tr>`).join(''); res.send(page('Estoque',`<h1>📥 Estoque QR</h1><div class="card"><form method="post" enctype="multipart/form-data"><select name="produto_id">${opts}</select><input type="file" name="qr" accept="image/*"><textarea name="codigo_texto" placeholder="Código texto opcional"></textarea><button class="green">Adicionar QR</button></form></div><div class="card"><table><tr><th>ID</th><th>Produto</th><th>Status</th><th>QR</th><th>Pedido</th><th>Ações</th></tr>${rows}</table></div>`)); });
+app.get('/admin/estoque',auth,(req,res)=>{ const ps=db.prepare('SELECT * FROM produtos WHERE ativo=1 ORDER BY nome').all(); const opts=ps.map(p=>`<option value="${p.id}">${safe(p.nome)} - estoque ${estoqueProduto(p.id)}</option>`).join(''); const rows=db.prepare('SELECT e.*,p.nome produto FROM estoque_qr e LEFT JOIN produtos p ON p.id=e.produto_id ORDER BY e.id DESC LIMIT 500').all().map(e=>`<tr><td>#${e.id}</td><td>${safe(e.produto)}</td><td><span class="pill">${safe(e.status)}</span></td><td>${e.arquivo?`<a href="/files/${encodeURIComponent(path.basename(e.arquivo))}" target="_blank">Ver QR</a>`:'Texto'}</td><td>${e.pedido_id||'-'}</td><td><form method="post" action="/admin/estoque/${e.id}/apagar" onsubmit="return confirm('Apagar QR?')"><button class="red">Apagar</button></form></td></tr>`).join(''); res.send(page('Estoque',`<h1>📥 Estoque QR</h1><div class="card"><form method="post" enctype="multipart/form-data"><select name="produto_id">${opts}</select><input type="file" name="qr" accept="image/*"><textarea name="codigo_texto" placeholder="Código texto opcional"></textarea><button class="green">Adicionar QR</button></form></div><div class="card"><table><tr><th>ID</th><th>Produto</th><th>Status</th><th>QR</th><th>Pedido</th><th>Ações</th></tr>${rows}</table></div>`)); });
 app.post('/admin/estoque',auth,upload.single('qr'),(req,res)=>{ const arquivo=req.file?req.file.filename:''; db.prepare('INSERT INTO estoque_qr(produto_id,arquivo,codigo_texto,status) VALUES(?,?,?,?)').run(req.body.produto_id,arquivo,req.body.codigo_texto||'', 'DISPONIVEL'); res.redirect('/admin/estoque'); });
 app.post('/admin/estoque/:id/apagar',auth,(req,res)=>{ const e=db.prepare('SELECT * FROM estoque_qr WHERE id=?').get(req.params.id); if(e?.arquivo){ try{fs.unlinkSync(path.join(UPLOAD_DIR,path.basename(e.arquivo)))}catch{} } db.prepare('DELETE FROM estoque_qr WHERE id=?').run(req.params.id); res.redirect('/admin/estoque'); });
 
-app.get('/admin/pedidos',auth,(req,res)=>{ const status=req.query.status; const rows=(status?db.prepare('SELECT * FROM pedidos WHERE status=? ORDER BY id DESC LIMIT 100').all(status):db.prepare('SELECT * FROM pedidos ORDER BY id DESC LIMIT 100').all()).map(p=>`<tr><td>#${p.id}</td><td>${safe(p.cliente_nome||'-')}<br>${safe(p.cliente_telefone||'-')}</td><td>${safe(p.produto_nome)}</td><td>${brl(p.valor)}</td><td><span class="pill">${safe(p.status)}</span></td><td>${safe(p.tipo_pagamento || 'compra')}</td><td><a class="btn green" href="/admin/pedidos/${p.id}/entregar">Entregar</a><form style="display:inline" method="post" action="/admin/pedidos/${p.id}/cancelar"><button class="red">Cancelar</button></form></td></tr>`).join(''); res.send(page('Pedidos',`<h1>📋 Pedidos</h1><div class="card"><table><tr><th>ID</th><th>Cliente</th><th>Produto</th><th>Valor</th><th>Status</th><th>Tipo</th><th>Ações</th></tr>${rows}</table></div>`)); });
+app.get('/admin/pedidos',auth,(req,res)=>{ const status=req.query.status; const rows=(status?db.prepare('SELECT * FROM pedidos WHERE status=? ORDER BY id DESC LIMIT 500').all(status):db.prepare('SELECT * FROM pedidos ORDER BY id DESC LIMIT 500').all()).map(p=>`<tr><td>#${p.id}</td><td>${safe(p.cliente_nome||'-')}<br>${safe(p.cliente_telefone||'-')}</td><td>${safe(p.produto_nome)}</td><td>${brl(p.valor)}</td><td><span class="pill">${safe(p.status)}</span></td><td>${safe(p.tipo_pagamento || 'compra')}</td><td><a class="btn green" href="/admin/pedidos/${p.id}/entregar">Entregar</a><form style="display:inline" method="post" action="/admin/pedidos/${p.id}/cancelar"><button class="red">Cancelar</button></form></td></tr>`).join(''); res.send(page('Pedidos',`<h1>📋 Pedidos</h1><div class="card"><table><tr><th>ID</th><th>Cliente</th><th>Produto</th><th>Valor</th><th>Status</th><th>Tipo</th><th>Ações</th></tr>${rows}</table></div>`)); });
 app.get('/admin/pedidos/:id/entregar',auth,(req,res)=>{ const p=db.prepare('SELECT * FROM pedidos WHERE id=?').get(req.params.id); res.send(page('Entregar',`<h1>📤 Entregar pedido #${safe(req.params.id)}</h1><div class="card"><form method="post" enctype="multipart/form-data"><textarea name="texto" rows="8">✅ Seu eSIM foi liberado!\n\nPedido #${p?.id||''}\nPlano: ${safe(p?.produto_nome||'')}</textarea><input type="file" name="qr" accept="image/*"><button class="green">Enviar ao cliente</button></form></div>`)); });
 app.post('/admin/pedidos/:id/entregar',auth,upload.single('qr'),async(req,res)=>{ await entregarPedido(Number(req.params.id), req.body.texto||'', req.file?path.join(UPLOAD_DIR,req.file.filename):''); res.redirect('/admin/pedidos'); });
 app.post('/admin/pedidos/:id/cancelar',auth,(req,res)=>{ db.prepare('UPDATE pedidos SET status=? WHERE id=?').run('CANCELADO', req.params.id); res.redirect('/admin/pedidos'); });
 
-app.get('/admin/clientes',auth,(req,res)=>{ const rows=db.prepare('SELECT * FROM clientes ORDER BY id DESC LIMIT 100').all().map(c=>`<tr><td>#${c.id}</td><td>${safe(c.nome)}</td><td>${safe(c.telefone)}</td><td>${brl(c.saldo || 0)}</td><td>${safe(c.criado_em)}</td><td><form method="post" action="/admin/clientes/saldo" style="display:flex;gap:6px;align-items:center"><input type="hidden" name="id" value="${c.id}"><input name="valor" placeholder="Valor" style="max-width:90px;margin:0"><button class="green">Add saldo</button></form></td></tr>`).join(''); res.send(page('Clientes',`<h1>👥 Clientes</h1><div class="card"><p class="muted">Adicione saldo manual para cliente comprar com saldo no WhatsApp.</p><table><tr><th>ID</th><th>Nome</th><th>Telefone</th><th>Saldo</th><th>Criado</th><th>Ação</th></tr>${rows}</table></div>`)); });
-app.post('/admin/clientes/saldo',auth,(req,res)=>{
-  try {
-    const id=Number(req.body.id);
-    const valor=Number(String(req.body.valor||'0').replace(',','.'));
-    if(id && valor){
-      db.prepare('UPDATE clientes SET saldo = saldo + ? WHERE id=?').run(valor,id);
-      const c=db.prepare('SELECT * FROM clientes WHERE id=?').get(id);
-      if(c) setImmediate(() => sendText(c.jid || phoneToJid(c.telefone), `💰 Saldo adicionado!
+app.get('/admin/clientes',auth,(req,res)=>{ const rows=db.prepare('SELECT * FROM clientes ORDER BY id DESC LIMIT 500').all().map(c=>`<tr><td>#${c.id}</td><td>${safe(c.nome)}</td><td>${safe(c.telefone)}</td><td>${brl(c.saldo || 0)}</td><td>${safe(c.criado_em)}</td><td><form method="post" action="/admin/clientes/saldo" style="display:flex;gap:6px;align-items:center"><input type="hidden" name="id" value="${c.id}"><input name="valor" placeholder="Valor" style="max-width:90px;margin:0"><button class="green">Add saldo</button></form></td></tr>`).join(''); res.send(page('Clientes',`<h1>👥 Clientes</h1><div class="card"><p class="muted">Adicione saldo manual para cliente comprar com saldo no WhatsApp.</p><table><tr><th>ID</th><th>Nome</th><th>Telefone</th><th>Saldo</th><th>Criado</th><th>Ação</th></tr>${rows}</table></div>`)); });
+app.post('/admin/clientes/saldo',auth,async(req,res)=>{ const id=Number(req.body.id); const valor=Number(String(req.body.valor||'0').replace(',','.')); if(id && valor){ db.prepare('UPDATE clientes SET saldo = saldo + ? WHERE id=?').run(valor,id); const c=db.prepare('SELECT * FROM clientes WHERE id=?').get(id); if(c) await sendText(c.jid || phoneToJid(c.telefone), `💰 Saldo adicionado!
 
 Valor: *${brl(valor)}*
-Saldo atual: *${brl(c.saldo || 0)}*`));
-    }
-  } catch(e) { console.log('Erro adicionar saldo:', e.message); }
-  res.redirect('/admin/clientes');
-});
+Saldo atual: *${brl(c.saldo || 0)}*`); } res.redirect('/admin/clientes'); });
 app.get('/admin/mensagem',auth,(req,res)=>res.send(page('Mensagem',`<h1>📢 Mensagem em massa</h1><div class="card"><form method="post"><textarea name="texto" rows="8" placeholder="Mensagem para clientes"></textarea><button class="orange">Enviar para todos</button></form></div>`)));
-app.post('/admin/mensagem',auth,(req,res)=>{
-  const texto=String(req.body.texto||'').trim();
-  if(texto){
-    setImmediate(async()=>{
-      try {
-        const cs=db.prepare('SELECT * FROM clientes LIMIT 1000').all();
-        let ok=0;
-        for(const c of cs){ if(await sendText(c.jid||phoneToJid(c.telefone), texto)) ok++; await new Promise(r=>setTimeout(r, 350)); }
-        db.prepare('INSERT INTO mensagens_salvas(texto,total) VALUES(?,?)').run(texto,ok);
-      } catch(e) { console.log('Erro mensagem em massa:', e.message); }
-    });
-  }
-  res.redirect('/admin/mensagem');
-});
+app.post('/admin/mensagem',auth,async(req,res)=>{ const texto=String(req.body.texto||'').trim(); if(texto){ const cs=db.prepare('SELECT * FROM clientes').all(); let ok=0; for(const c of cs){ if(await sendText(c.jid||phoneToJid(c.telefone), texto)) ok++; } db.prepare('INSERT INTO mensagens_salvas(texto,total) VALUES(?,?)').run(texto,ok); } res.redirect('/admin/mensagem'); });
 
 app.get('/admin/menu-imagem',auth,(req,res)=>{
   const menuFile = getConfig('menu_image_file','');
@@ -742,32 +605,7 @@ app.get('/admin/financeiro',auth,(req,res)=>{
 app.get('/admin/backup',auth,(req,res)=>{ const files=fs.readdirSync(BACKUP_DIR).filter(f=>f.endsWith('.db') || f.endsWith('.tar.gz')).sort().reverse(); const rows=files.map(f=>`<tr><td>${safe(f)}</td><td><a class="btn" href="/admin/backup/download/${encodeURIComponent(f)}">Baixar</a></td></tr>`).join(''); res.send(page('Backup',`<h1>💾 Backup</h1><div class="card"><p class="muted">Backup completo inclui banco de dados e imagens dos QR Codes. O sistema também cria backup automático a cada ${BACKUP_INTERVAL_HOURS} horas.</p><form method="post" action="/admin/backup"><button class="green">Criar backup completo agora</button></form></div><table><tr><th>Arquivo</th><th>Ação</th></tr>${rows}</table>`)); });
 app.post('/admin/backup',auth,(req,res)=>{ criarBackupCompleto('backup_manual'); res.redirect('/admin/backup'); });
 app.get('/admin/backup/download/:file',auth,(req,res)=>{ const f=path.basename(req.params.file); res.download(path.join(BACKUP_DIR,f)); });
-async function resetWhatsAppSession() {
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer);
-    reconnectTimer = null;
-  }
-  whatsappStarting = false;
-  conectado = false;
-  qrBase64 = null;
-  try { sock?.ev?.removeAllListeners?.(); } catch(e) { console.log('Erro removendo listeners:', e.message); }
-  try { sock?.ws?.close?.(); } catch(e) { console.log('Erro fechando socket:', e.message); }
-  sock = null;
-  fs.rmSync(AUTH_DIR, { recursive: true, force: true });
-  fs.mkdirSync(AUTH_DIR, { recursive: true });
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null;
-    startWhatsApp().catch(e => console.log('Erro reiniciar WhatsApp:', e.message));
-  }, 3000);
-}
-app.get('/admin/reset-whatsapp', auth, async (req,res) => {
-  await resetWhatsAppSession();
-  res.send(page('Reset WhatsApp', qrWhatsappHtml('Sessão antiga apagada. Aguarde alguns segundos e atualize esta página para aparecer o novo QR.')));
-});
-app.post('/admin/reset-whatsapp', auth, async (req,res)=>{
-  await resetWhatsAppSession();
-  res.send(page('Reset WhatsApp', qrWhatsappHtml('Sessão antiga apagada. Aguarde alguns segundos e atualize esta página para aparecer o novo QR.')));
-});
+app.post('/admin/reset-whatsapp',auth,(req,res)=>{ fs.rmSync(AUTH_DIR,{recursive:true,force:true}); fs.mkdirSync(AUTH_DIR,{recursive:true}); res.send(page('Reset','<div class="card">Sessão apagada. Reinicie o serviço e abra /qr.</div>')); });
 
 app.get('/webhook/pixgo', (req,res)=>res.status(200).send('Webhook PixGo online ✅'));
 app.post('/webhook/pixgo', async (req,res)=>{
@@ -810,39 +648,6 @@ app.post('/webhook/pixgo', async (req,res)=>{
     return res.status(200).json({success:true,error:e.message});
   }
 });
-
-process.on('uncaughtException', (e) => {
-  console.log('Erro não capturado:', e.message);
-  if (String(e.message || '').toLowerCase().includes('timed out')) {
-    if (reconnectTimer) clearTimeout(reconnectTimer);
-    whatsappStarting = false;
-    conectado = false;
-    reconnectTimer = setTimeout(() => {
-      reconnectTimer = null;
-      startWhatsApp().catch(err => console.log('Erro reconectar após timeout:', err.message));
-    }, 10000);
-    return;
-  }
-});
-process.on('unhandledRejection', (e) => {
-  const msg = e?.message || String(e || '');
-  console.log('Promise rejeitada:', msg);
-  if (msg.toLowerCase().includes('timed out')) {
-    if (reconnectTimer) clearTimeout(reconnectTimer);
-    whatsappStarting = false;
-    conectado = false;
-    reconnectTimer = setTimeout(() => {
-      reconnectTimer = null;
-      startWhatsApp().catch(err => console.log('Erro reconectar após timeout:', err.message));
-    }, 10000);
-  }
-});
-
-
-app.get('/status', (req,res)=>res.json({ ok:true, conectado, uptime: Math.round(process.uptime()), db: DB_PATH }));
-
-process.on('uncaughtException', (e) => console.log('ERRO GLOBAL:', e.message));
-process.on('unhandledRejection', (e) => console.log('PROMISE ERRO:', e?.message || e));
 
 initDB();
 iniciarBackupAutomatico();
