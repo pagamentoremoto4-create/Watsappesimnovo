@@ -605,8 +605,13 @@ async function startWhatsApp() {
 
     sock.ev.on('messages.upsert', async ({ messages }) => {
       for (const m of messages) {
-        try { await tratarMensagem(m); }
-        catch(e) { console.log('Erro mensagem:', e.message); }
+        setImmediate(async () => {
+          try {
+            await tratarMensagem(m);
+          } catch(e) {
+            console.log('Erro mensagem:', e);
+          }
+        });
       }
     });
   } catch (e) {
