@@ -65,6 +65,8 @@ db.pragma('journal_mode = WAL');
 let sock = null;
 let qrBase64 = null;
 let conectado = false;
+let whatsappStarting = false;
+let reconnectTimer = null;
 const userState = new Map();
 const adminDeliveryState = new Map();
 
@@ -514,22 +516,82 @@ async function tratarMensagem(msg) {
 }
 
 async function startWhatsApp() {
-  const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
-  const { version } = await fetchLatestBaileysVersion();
-  sock = makeWASocket({ version, auth: state, logger: pino({ level: 'silent' }), printQRInTerminal: false });
-  sock.ev.on('creds.update', saveCreds);
-  sock.ev.on('connection.update', async (u) => {
-    const { connection, lastDisconnect, qr } = u;
-    if (qr) { qrBase64 = await QRCode.toDataURL(qr); conectado = false; console.log('QR WhatsApp atualizado. Abra /qr'); }
-    if (connection === 'open') { conectado = true; qrBase64 = null; console.log('WhatsApp conectado.'); }
-    if (connection === 'close') {
-      conectado = false;
-      const code = lastDisconnect?.error?.output?.statusCode;
-      if (code !== DisconnectReason.loggedOut) startWhatsApp();
-      else console.log('Sessão desconectada. Abra /admin/whatsapp e clique para resetar.');
-    }
-  });
-  sock.ev.on('messages.upsert', async ({ messages }) => { for (const m of messages) { try { await tratarMensagem(m); } catch(e) { console.log('Erro mensagem:', e.message); } } });
+  if (whatsappStarting) {
+    console.log('Start WhatsApp ignorado: conexão já está iniciando.');
+    return;
+  }
+  if (sock && conectado) {
+    console.log('Start WhatsApp ignorado: já conectado.');
+    return;
+  }
+  whatsappStarting = true;
+  try {
+    const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+    const { version } = await fetchLatestBaileysVersion();
+
+    try { sock?.ev?.removeAllListeners?.(); } catch {}
+    try { sock?.ws?.close?.(); } catch {}
+
+    sock = makeWASocket({
+      version,
+      auth: state,
+      logger: pino({ level: 'silent' }),
+      printQRInTerminal: false,
+      connectTimeoutMs: 60000,
+      defaultQueryTimeoutMs: 60000,
+      keepAliveIntervalMs: 30000
+    });
+
+    sock.ev.on('creds.update', saveCreds);
+    sock.ev.on('connection.update', async (u) => {
+      const { connection, lastDisconnect, qr } = u;
+
+      if (qr) {
+        qrBase64 = await QRCode.toDataURL(qr);
+        conectado = false;
+        console.log('QR WhatsApp atualizado. Abra /qr');
+      }
+
+      if (connection === 'open') {
+        conectado = true;
+        whatsappStarting = false;
+        qrBase64 = null;
+        console.log('WhatsApp conectado.');
+      }
+
+      if (connection === 'close') {
+        conectado = false;
+        whatsappStarting = false;
+        const code = lastDisconnect?.error?.output?.statusCode;
+        console.log('WhatsApp conexão fechada. Código:', code || 'sem código');
+
+        if (code !== DisconnectReason.loggedOut) {
+          if (reconnectTimer) clearTimeout(reconnectTimer);
+          reconnectTimer = setTimeout(() => {
+            reconnectTimer = null;
+            startWhatsApp().catch(e => console.log('Erro reconectar WhatsApp:', e.message));
+          }, 8000);
+        } else {
+          console.log('Sessão desconectada. Abra /admin/whatsapp e clique para resetar.');
+        }
+      }
+    });
+
+    sock.ev.on('messages.upsert', async ({ messages }) => {
+      for (const m of messages) {
+        try { await tratarMensagem(m); }
+        catch(e) { console.log('Erro mensagem:', e.message); }
+      }
+    });
+  } catch (e) {
+    whatsappStarting = false;
+    console.log('Erro iniciar WhatsApp:', e.message);
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      startWhatsApp().catch(err => console.log('Erro reconectar WhatsApp:', err.message));
+    }, 10000);
+  }
 }
 
 function page(title, body) {
@@ -624,13 +686,22 @@ app.get('/admin/backup',auth,(req,res)=>{ const files=fs.readdirSync(BACKUP_DIR)
 app.post('/admin/backup',auth,(req,res)=>{ criarBackupCompleto('backup_manual'); res.redirect('/admin/backup'); });
 app.get('/admin/backup/download/:file',auth,(req,res)=>{ const f=path.basename(req.params.file); res.download(path.join(BACKUP_DIR,f)); });
 async function resetWhatsAppSession() {
-  try { if (sock?.ws?.close) sock.ws.close(); } catch(e) { console.log('Erro fechando socket:', e.message); }
-  sock = null;
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  whatsappStarting = false;
   conectado = false;
   qrBase64 = null;
+  try { sock?.ev?.removeAllListeners?.(); } catch(e) { console.log('Erro removendo listeners:', e.message); }
+  try { sock?.ws?.close?.(); } catch(e) { console.log('Erro fechando socket:', e.message); }
+  sock = null;
   fs.rmSync(AUTH_DIR, { recursive: true, force: true });
   fs.mkdirSync(AUTH_DIR, { recursive: true });
-  setTimeout(() => startWhatsApp().catch(e => console.log('Erro reiniciar WhatsApp:', e.message)), 1000);
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    startWhatsApp().catch(e => console.log('Erro reiniciar WhatsApp:', e.message));
+  }, 3000);
 }
 app.get('/admin/reset-whatsapp', auth, async (req,res) => {
   await resetWhatsAppSession();
@@ -680,6 +751,33 @@ app.post('/webhook/pixgo', async (req,res)=>{
   } catch(e) {
     console.log('Webhook erro:', e.message);
     return res.status(200).json({success:true,error:e.message});
+  }
+});
+
+process.on('uncaughtException', (e) => {
+  console.log('Erro não capturado:', e.message);
+  if (String(e.message || '').toLowerCase().includes('timed out')) {
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    whatsappStarting = false;
+    conectado = false;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      startWhatsApp().catch(err => console.log('Erro reconectar após timeout:', err.message));
+    }, 10000);
+    return;
+  }
+});
+process.on('unhandledRejection', (e) => {
+  const msg = e?.message || String(e || '');
+  console.log('Promise rejeitada:', msg);
+  if (msg.toLowerCase().includes('timed out')) {
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    whatsappStarting = false;
+    conectado = false;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      startWhatsApp().catch(err => console.log('Erro reconectar após timeout:', err.message));
+    }, 10000);
   }
 });
 
