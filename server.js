@@ -381,6 +381,7 @@ async function entregarPedido(pedidoId, manualTexto='', manualArquivo='') {
 }
 
 async function tratarMensagem(msg) {
+  console.log('MSG RECEBIDA:', msg?.key?.remoteJid, getText(msg));
   const jid = msg.key.remoteJid;
   if (!jid || jid.endsWith('@g.us') || msg.key.fromMe || jid === 'status@broadcast') return;
   const text = getText(msg).trim();
@@ -586,6 +587,9 @@ async function startWhatsApp() {
       }
 
       if (connection === 'close') {
+        sock = null;
+        conectado = false;
+        whatsappStarting = false;
         conectado = false;
         whatsappStarting = false;
         const code = lastDisconnect?.error?.output?.statusCode;
@@ -605,13 +609,11 @@ async function startWhatsApp() {
 
     sock.ev.on('messages.upsert', async ({ messages }) => {
       for (const m of messages) {
-        setImmediate(async () => {
-          try {
-            await tratarMensagem(m);
-          } catch(e) {
-            console.log('Erro mensagem:', e);
-          }
-        });
+        try {
+          await tratarMensagem(m);
+        } catch(e) {
+          console.log('Erro mensagem:', e?.message || e);
+        }
       }
     });
   } catch (e) {
