@@ -43,6 +43,11 @@ const BACKUP_KEEP = Number(process.env.BACKUP_KEEP || 30);
 for (const dir of [DATA_DIR, UPLOAD_DIR, AUTH_DIR, BACKUP_DIR]) fs.mkdirSync(dir, { recursive: true });
 
 const app = express();
+app.use((req, res, next) => {
+  req.setTimeout(30000);
+  res.setTimeout(30000);
+  next();
+});
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 app.use(express.json({ limit: '20mb' }));
 app.use('/files', express.static(UPLOAD_DIR));
@@ -62,6 +67,9 @@ const upload = multer({
 
 const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
+db.pragma('busy_timeout = 10000');
+db.pragma('synchronous = NORMAL');
+db.pragma('temp_store = MEMORY');
 let sock = null;
 let qrBase64 = null;
 let conectado = false;
@@ -194,8 +202,26 @@ function getConfig(k, def='') { const r = db.prepare('SELECT valor FROM configs 
 function setConfig(k, v) { db.prepare('INSERT OR REPLACE INTO configs(chave,valor,atualizado_em) VALUES(?,?,CURRENT_TIMESTAMP)').run(k, String(v)); }
 function auth(req,res,next){ if(req.session.admin) return next(); res.redirect('/admin/login'); }
 
-async function sendText(to, text) { if (!sock) return false; try { await sock.sendMessage(to, { text }); return true; } catch(e) { console.log('Erro enviar texto:', e.message); return false; } }
-async function sendImage(to, filePath, caption='') { if (!sock || !fs.existsSync(filePath)) return false; try { await sock.sendMessage(to, { image: fs.readFileSync(filePath), caption }); return true; } catch(e) { console.log('Erro enviar imagem:', e.message); return false; } }
+async function sendText(to, text) {
+  if (!sock) return false;
+  try {
+    await Promise.race([
+      sock.sendMessage(to, { text }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout envio texto')), 15000))
+    ]);
+    return true;
+  } catch(e) { console.log('Erro enviar texto:', e.message); return false; }
+}
+async function sendImage(to, filePath, caption='') {
+  if (!sock || !fs.existsSync(filePath)) return false;
+  try {
+    await Promise.race([
+      sock.sendMessage(to, { image: fs.readFileSync(filePath), caption }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout envio imagem')), 20000))
+    ]);
+    return true;
+  } catch(e) { console.log('Erro enviar imagem:', e.message); return false; }
+}
 async function notifyAdmins(text) { for (const n of ADMIN_NUMBERS) await sendText(phoneToJid(n), text); }
 
 function limparBackupsAntigos() {
@@ -631,22 +657,46 @@ app.get('/admin/produtos/:id/editar',auth,(req,res)=>{ const p=db.prepare('SELEC
 app.post('/admin/produtos/:id/editar',auth,(req,res)=>{ db.prepare('UPDATE produtos SET nome=?,gb=?,validade=?,preco=?,descricao=?,destaque=?,ativo=?,permite_manual_sem_estoque=? WHERE id=?').run(req.body.nome,req.body.gb||'',req.body.validade||'',Number(String(req.body.preco).replace(',','.')),req.body.descricao||'',req.body.destaque?1:0,req.body.ativo?1:0,req.body.manual?1:0,req.params.id); res.redirect('/admin/produtos'); });
 app.post('/admin/produtos/:id/apagar',auth,(req,res)=>{ db.prepare('UPDATE produtos SET ativo=0 WHERE id=?').run(req.params.id); res.redirect('/admin/produtos'); });
 
-app.get('/admin/estoque',auth,(req,res)=>{ const ps=db.prepare('SELECT * FROM produtos WHERE ativo=1 ORDER BY nome').all(); const opts=ps.map(p=>`<option value="${p.id}">${safe(p.nome)} - estoque ${estoqueProduto(p.id)}</option>`).join(''); const rows=db.prepare('SELECT e.*,p.nome produto FROM estoque_qr e LEFT JOIN produtos p ON p.id=e.produto_id ORDER BY e.id DESC LIMIT 500').all().map(e=>`<tr><td>#${e.id}</td><td>${safe(e.produto)}</td><td><span class="pill">${safe(e.status)}</span></td><td>${e.arquivo?`<a href="/files/${encodeURIComponent(path.basename(e.arquivo))}" target="_blank">Ver QR</a>`:'Texto'}</td><td>${e.pedido_id||'-'}</td><td><form method="post" action="/admin/estoque/${e.id}/apagar" onsubmit="return confirm('Apagar QR?')"><button class="red">Apagar</button></form></td></tr>`).join(''); res.send(page('Estoque',`<h1>📥 Estoque QR</h1><div class="card"><form method="post" enctype="multipart/form-data"><select name="produto_id">${opts}</select><input type="file" name="qr" accept="image/*"><textarea name="codigo_texto" placeholder="Código texto opcional"></textarea><button class="green">Adicionar QR</button></form></div><div class="card"><table><tr><th>ID</th><th>Produto</th><th>Status</th><th>QR</th><th>Pedido</th><th>Ações</th></tr>${rows}</table></div>`)); });
+app.get('/admin/estoque',auth,(req,res)=>{ const ps=db.prepare('SELECT * FROM produtos WHERE ativo=1 ORDER BY nome').all(); const opts=ps.map(p=>`<option value="${p.id}">${safe(p.nome)} - estoque ${estoqueProduto(p.id)}</option>`).join(''); const rows=db.prepare('SELECT e.*,p.nome produto FROM estoque_qr e LEFT JOIN produtos p ON p.id=e.produto_id ORDER BY e.id DESC LIMIT 100').all().map(e=>`<tr><td>#${e.id}</td><td>${safe(e.produto)}</td><td><span class="pill">${safe(e.status)}</span></td><td>${e.arquivo?`<a href="/files/${encodeURIComponent(path.basename(e.arquivo))}" target="_blank">Ver QR</a>`:'Texto'}</td><td>${e.pedido_id||'-'}</td><td><form method="post" action="/admin/estoque/${e.id}/apagar" onsubmit="return confirm('Apagar QR?')"><button class="red">Apagar</button></form></td></tr>`).join(''); res.send(page('Estoque',`<h1>📥 Estoque QR</h1><div class="card"><form method="post" enctype="multipart/form-data"><select name="produto_id">${opts}</select><input type="file" name="qr" accept="image/*"><textarea name="codigo_texto" placeholder="Código texto opcional"></textarea><button class="green">Adicionar QR</button></form></div><div class="card"><table><tr><th>ID</th><th>Produto</th><th>Status</th><th>QR</th><th>Pedido</th><th>Ações</th></tr>${rows}</table></div>`)); });
 app.post('/admin/estoque',auth,upload.single('qr'),(req,res)=>{ const arquivo=req.file?req.file.filename:''; db.prepare('INSERT INTO estoque_qr(produto_id,arquivo,codigo_texto,status) VALUES(?,?,?,?)').run(req.body.produto_id,arquivo,req.body.codigo_texto||'', 'DISPONIVEL'); res.redirect('/admin/estoque'); });
 app.post('/admin/estoque/:id/apagar',auth,(req,res)=>{ const e=db.prepare('SELECT * FROM estoque_qr WHERE id=?').get(req.params.id); if(e?.arquivo){ try{fs.unlinkSync(path.join(UPLOAD_DIR,path.basename(e.arquivo)))}catch{} } db.prepare('DELETE FROM estoque_qr WHERE id=?').run(req.params.id); res.redirect('/admin/estoque'); });
 
-app.get('/admin/pedidos',auth,(req,res)=>{ const status=req.query.status; const rows=(status?db.prepare('SELECT * FROM pedidos WHERE status=? ORDER BY id DESC LIMIT 500').all(status):db.prepare('SELECT * FROM pedidos ORDER BY id DESC LIMIT 500').all()).map(p=>`<tr><td>#${p.id}</td><td>${safe(p.cliente_nome||'-')}<br>${safe(p.cliente_telefone||'-')}</td><td>${safe(p.produto_nome)}</td><td>${brl(p.valor)}</td><td><span class="pill">${safe(p.status)}</span></td><td>${safe(p.tipo_pagamento || 'compra')}</td><td><a class="btn green" href="/admin/pedidos/${p.id}/entregar">Entregar</a><form style="display:inline" method="post" action="/admin/pedidos/${p.id}/cancelar"><button class="red">Cancelar</button></form></td></tr>`).join(''); res.send(page('Pedidos',`<h1>📋 Pedidos</h1><div class="card"><table><tr><th>ID</th><th>Cliente</th><th>Produto</th><th>Valor</th><th>Status</th><th>Tipo</th><th>Ações</th></tr>${rows}</table></div>`)); });
+app.get('/admin/pedidos',auth,(req,res)=>{ const status=req.query.status; const rows=(status?db.prepare('SELECT * FROM pedidos WHERE status=? ORDER BY id DESC LIMIT 100').all(status):db.prepare('SELECT * FROM pedidos ORDER BY id DESC LIMIT 100').all()).map(p=>`<tr><td>#${p.id}</td><td>${safe(p.cliente_nome||'-')}<br>${safe(p.cliente_telefone||'-')}</td><td>${safe(p.produto_nome)}</td><td>${brl(p.valor)}</td><td><span class="pill">${safe(p.status)}</span></td><td>${safe(p.tipo_pagamento || 'compra')}</td><td><a class="btn green" href="/admin/pedidos/${p.id}/entregar">Entregar</a><form style="display:inline" method="post" action="/admin/pedidos/${p.id}/cancelar"><button class="red">Cancelar</button></form></td></tr>`).join(''); res.send(page('Pedidos',`<h1>📋 Pedidos</h1><div class="card"><table><tr><th>ID</th><th>Cliente</th><th>Produto</th><th>Valor</th><th>Status</th><th>Tipo</th><th>Ações</th></tr>${rows}</table></div>`)); });
 app.get('/admin/pedidos/:id/entregar',auth,(req,res)=>{ const p=db.prepare('SELECT * FROM pedidos WHERE id=?').get(req.params.id); res.send(page('Entregar',`<h1>📤 Entregar pedido #${safe(req.params.id)}</h1><div class="card"><form method="post" enctype="multipart/form-data"><textarea name="texto" rows="8">✅ Seu eSIM foi liberado!\n\nPedido #${p?.id||''}\nPlano: ${safe(p?.produto_nome||'')}</textarea><input type="file" name="qr" accept="image/*"><button class="green">Enviar ao cliente</button></form></div>`)); });
 app.post('/admin/pedidos/:id/entregar',auth,upload.single('qr'),async(req,res)=>{ await entregarPedido(Number(req.params.id), req.body.texto||'', req.file?path.join(UPLOAD_DIR,req.file.filename):''); res.redirect('/admin/pedidos'); });
 app.post('/admin/pedidos/:id/cancelar',auth,(req,res)=>{ db.prepare('UPDATE pedidos SET status=? WHERE id=?').run('CANCELADO', req.params.id); res.redirect('/admin/pedidos'); });
 
-app.get('/admin/clientes',auth,(req,res)=>{ const rows=db.prepare('SELECT * FROM clientes ORDER BY id DESC LIMIT 500').all().map(c=>`<tr><td>#${c.id}</td><td>${safe(c.nome)}</td><td>${safe(c.telefone)}</td><td>${brl(c.saldo || 0)}</td><td>${safe(c.criado_em)}</td><td><form method="post" action="/admin/clientes/saldo" style="display:flex;gap:6px;align-items:center"><input type="hidden" name="id" value="${c.id}"><input name="valor" placeholder="Valor" style="max-width:90px;margin:0"><button class="green">Add saldo</button></form></td></tr>`).join(''); res.send(page('Clientes',`<h1>👥 Clientes</h1><div class="card"><p class="muted">Adicione saldo manual para cliente comprar com saldo no WhatsApp.</p><table><tr><th>ID</th><th>Nome</th><th>Telefone</th><th>Saldo</th><th>Criado</th><th>Ação</th></tr>${rows}</table></div>`)); });
-app.post('/admin/clientes/saldo',auth,async(req,res)=>{ const id=Number(req.body.id); const valor=Number(String(req.body.valor||'0').replace(',','.')); if(id && valor){ db.prepare('UPDATE clientes SET saldo = saldo + ? WHERE id=?').run(valor,id); const c=db.prepare('SELECT * FROM clientes WHERE id=?').get(id); if(c) await sendText(c.jid || phoneToJid(c.telefone), `💰 Saldo adicionado!
+app.get('/admin/clientes',auth,(req,res)=>{ const rows=db.prepare('SELECT * FROM clientes ORDER BY id DESC LIMIT 100').all().map(c=>`<tr><td>#${c.id}</td><td>${safe(c.nome)}</td><td>${safe(c.telefone)}</td><td>${brl(c.saldo || 0)}</td><td>${safe(c.criado_em)}</td><td><form method="post" action="/admin/clientes/saldo" style="display:flex;gap:6px;align-items:center"><input type="hidden" name="id" value="${c.id}"><input name="valor" placeholder="Valor" style="max-width:90px;margin:0"><button class="green">Add saldo</button></form></td></tr>`).join(''); res.send(page('Clientes',`<h1>👥 Clientes</h1><div class="card"><p class="muted">Adicione saldo manual para cliente comprar com saldo no WhatsApp.</p><table><tr><th>ID</th><th>Nome</th><th>Telefone</th><th>Saldo</th><th>Criado</th><th>Ação</th></tr>${rows}</table></div>`)); });
+app.post('/admin/clientes/saldo',auth,(req,res)=>{
+  try {
+    const id=Number(req.body.id);
+    const valor=Number(String(req.body.valor||'0').replace(',','.'));
+    if(id && valor){
+      db.prepare('UPDATE clientes SET saldo = saldo + ? WHERE id=?').run(valor,id);
+      const c=db.prepare('SELECT * FROM clientes WHERE id=?').get(id);
+      if(c) setImmediate(() => sendText(c.jid || phoneToJid(c.telefone), `💰 Saldo adicionado!
 
 Valor: *${brl(valor)}*
-Saldo atual: *${brl(c.saldo || 0)}*`); } res.redirect('/admin/clientes'); });
+Saldo atual: *${brl(c.saldo || 0)}*`));
+    }
+  } catch(e) { console.log('Erro adicionar saldo:', e.message); }
+  res.redirect('/admin/clientes');
+});
 app.get('/admin/mensagem',auth,(req,res)=>res.send(page('Mensagem',`<h1>📢 Mensagem em massa</h1><div class="card"><form method="post"><textarea name="texto" rows="8" placeholder="Mensagem para clientes"></textarea><button class="orange">Enviar para todos</button></form></div>`)));
-app.post('/admin/mensagem',auth,async(req,res)=>{ const texto=String(req.body.texto||'').trim(); if(texto){ const cs=db.prepare('SELECT * FROM clientes').all(); let ok=0; for(const c of cs){ if(await sendText(c.jid||phoneToJid(c.telefone), texto)) ok++; } db.prepare('INSERT INTO mensagens_salvas(texto,total) VALUES(?,?)').run(texto,ok); } res.redirect('/admin/mensagem'); });
+app.post('/admin/mensagem',auth,(req,res)=>{
+  const texto=String(req.body.texto||'').trim();
+  if(texto){
+    setImmediate(async()=>{
+      try {
+        const cs=db.prepare('SELECT * FROM clientes LIMIT 1000').all();
+        let ok=0;
+        for(const c of cs){ if(await sendText(c.jid||phoneToJid(c.telefone), texto)) ok++; await new Promise(r=>setTimeout(r, 350)); }
+        db.prepare('INSERT INTO mensagens_salvas(texto,total) VALUES(?,?)').run(texto,ok);
+      } catch(e) { console.log('Erro mensagem em massa:', e.message); }
+    });
+  }
+  res.redirect('/admin/mensagem');
+});
 
 app.get('/admin/menu-imagem',auth,(req,res)=>{
   const menuFile = getConfig('menu_image_file','');
@@ -780,6 +830,12 @@ process.on('unhandledRejection', (e) => {
     }, 10000);
   }
 });
+
+
+app.get('/status', (req,res)=>res.json({ ok:true, conectado, uptime: Math.round(process.uptime()), db: DB_PATH }));
+
+process.on('uncaughtException', (e) => console.log('ERRO GLOBAL:', e.message));
+process.on('unhandledRejection', (e) => console.log('PROMISE ERRO:', e?.message || e));
 
 initDB();
 iniciarBackupAutomatico();
