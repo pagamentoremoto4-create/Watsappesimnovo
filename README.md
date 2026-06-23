@@ -1,82 +1,25 @@
-# WhatsApp eSIM Centralunlocker - versão completa
+# CentralUnlocker Dual WhatsApp - eSIM Manual
 
-Inclui:
-- PIX PixGo funcionando com copia e cola separado
-- Compra com saldo
-- Depósito de saldo via PIX
-- Entrega automática por estoque QR
-- Entrega manual quando estoque zerar
-- Painel admin
-- Painel financeiro
-- Mensagem em massa
-- Backup manual completo
-- Backup automático a cada 6 horas
-- Menu com imagem/banner via `MENU_IMAGE_URL`
+Versão com:
 
-## Variáveis Render
+- WhatsApp 1 mantido para revendas/serviços.
+- WhatsApp 2 para venda de eSIM cliente final.
+- Mesmo estoque eSIM para os dois WhatsApps.
+- QR Code dos eSIM salvo em disco persistente.
+- Plano eSIM pode continuar disponível mesmo quando o estoque automático acaba.
+- Área `/admin/esim/manuais` para entregar QR manual depois do pagamento.
+- Botão `📤 Entregar QR` nos pedidos manuais de eSIM.
+
+## Variáveis recomendadas no Render
 
 ```txt
-NODE_VERSION=20.20.2
-BASE_URL=https://watsappesimnovo.onrender.com
-PIXGO_API_KEY=sua_chave_pixgo
-PIXGO_URL=https://pixgo.org/api/v1/payment/create
-ADMIN_NUMBERS=55SEUNUMERO
-ADMIN_USER=admin
-ADMIN_PASS=123456
+DB_PATH=/data/database.db
 DATA_DIR=/data
-BACKUP_INTERVAL_HOURS=6
-BACKUP_KEEP=30
-MENU_IMAGE_URL=https://link-da-sua-imagem.png
-SUPORTE_WHATSAPP=55SEUNUMERO
+ESIM_DIR=/data/esim
 ```
 
-## Importante
-Crie um Persistent Disk no Render com mount path:
 
-```txt
-/data
-```
-
-Assim o banco, QR Codes, sessão do WhatsApp e backups ficam salvos.
-
-## Backup
-No painel acesse:
-
-```txt
-/admin/backup
-```
-
-O backup completo salva:
-- banco `esim.db`
-- pasta de QR Codes `uploads_esim`
-
-Também cria backup automático conforme `BACKUP_INTERVAL_HOURS`.
-
-## Imagem do menu pelo painel
-
-Agora você pode trocar a imagem do menu diretamente pelo painel:
-
-```txt
-/admin/menu-imagem
-```
-
-Opções disponíveis:
-- Enviar imagem direto do painel
-- Usar link de imagem
-- Remover imagem do menu
-
-A imagem será enviada quando o cliente digitar: oi, menu, olá, start ou cancelar.
-
-
-## Entrega manual pelo WhatsApp Admin
-
-Configure `ADMIN_NUMBERS=55SEUNUMERO` no Render. Pelo WhatsApp do admin use:
-
-```txt
-/pendentes
-/entregar 123
-/cancelar 123
-/pedido 123
-```
-
-Depois de `/entregar 123`, envie a foto do QR Code ou texto da entrega. O bot envia ao cliente e marca o pedido como entregue.
+## Correção eSIM manual revenda
+- Pedidos eSIM manuais de revenda agora aparecem em `/admin/esim/manuais`.
+- A entrega manual pelo painel envia o QR para revenda ou cliente corretamente.
+- O botão `📤 Entregar QR` aparece para qualquer pedido com `entrada_label` contendo eSIM.
