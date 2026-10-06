@@ -39,10 +39,10 @@ Cliente no WhatsApp → menu → serviço → cadastro (nome obtido automaticame
 08:00, 09:45, 14:00, 15:45. Meta de 4 carros/dia. Cada lavagem reserva 1h30 + 15min de intervalo; almoço bloqueado das 11:30 às 14:00.
 
 ## Serviços
-- Express — R$ 70
-- Premium — R$ 100
+- Express — R$ 70 — Inclui lavagem completa, aspiração detalhada e acabamento dos pneus.
+- Premium — R$ 100 — Inclui tudo da Express + cera líquida e aplicação de produto no painel e plásticos internos.
 
-Os serviços podem ser alterados no banco/API depois; esta versão inicial já os cria automaticamente.
+Nome, preço e descrição dos serviços podem ser alterados na área **Serviços e preços** do painel administrativo, sem editar o código. No atendimento, a assistente pergunta o serviço depois que o cliente escolhe o horário e exibe a descrição e o preço na confirmação final.
 
 ## Render
 1. Crie um novo Web Service para este projeto.
