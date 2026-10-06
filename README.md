@@ -50,6 +50,12 @@ O diretório `android-apps` contém dois projetos Android separados: **Harmony A
 
 O APK administrativo abre `/admin` e mantém a autenticação do painel. O APK do André abre `/app-andre`, salva o link operacional no aparelho e não mostra as configurações administrativas. Ambos aceitam câmera e galeria para envio de fotos.
 
+No painel, o botão **Salvar número e testar aviso** envia imediatamente uma mensagem ao WhatsApp do lavador. O número somente é salvo quando o teste é enviado com sucesso, facilitando a verificação dos avisos de novo agendamento e do lembrete de 15 minutos.
+
+Clientes recorrentes com um único veículo cadastrado não precisam informar novamente o modelo e a cor. Quando houver mais de um veículo, a assistente apresenta a lista e pede apenas o modelo desejado. A pergunta completa volta a ser feita somente no primeiro cadastro ou quando o cliente disser **outro carro**.
+
+A MisticPay utiliza um único **CPF fixo**, salvo de forma criptografada no painel. Esse CPF é validado antes de ser salvo e usado automaticamente em todas as cobranças, sem solicitar documentos aos clientes.
+
 ## Serviços
 - Express — R$ 70 — Inclui lavagem completa, aspiração detalhada e acabamento dos pneus.
 - Premium — R$ 100 — Inclui tudo da Express + cera líquida e aplicação de produto no painel e plásticos internos.
