@@ -4,6 +4,20 @@ Projeto independente em Node 20, Express, SQLite, Baileys, Mercado Pago, Multer,
 
 Esta versão inclui também as 23 imagens na raiz do projeto. Isso evita imagens ausentes quando o projeto é enviado ao GitHub sem preservar as subpastas. No primeiro início, o sistema copia automaticamente todas as imagens que estiverem faltando para o disco persistente e registra cada instalação no log do Render.
 
+## Atendimento com duas IAs
+
+O painel permite escolher quem conduz o atendimento:
+
+- **OpenAI** — usa a Responses API;
+- **Gemini** — usa a API `models.generateContent`;
+- **Menu tradicional** — mantém o fluxo numérico sem IA.
+
+As chaves e os modelos são configurados no painel e ficam criptografados no banco. Há botões separados para testar OpenAI e Gemini. Se a IA escolhida falhar, o bot informa a indisponibilidade e abre automaticamente o menu tradicional.
+
+A IA entende mensagens naturais e coleta serviço, casa, veículo, data, horário e forma de pagamento. O código continua sendo a autoridade para preços, disponibilidade, criação da reserva, cobrança PIX e confirmação do pagamento. A IA nunca confirma diretamente uma cobrança.
+
+Modelos iniciais sugeridos no painel: `gpt-5.6-luna` e `gemini-3.8-flash`. Os dois campos são editáveis para permitir futuras atualizações sem alterar o código.
+
 ## Fluxo
 Cliente no WhatsApp → menu → serviço → cadastro (nome obtido automaticamente do perfil, casa, modelo e cor em uma única pergunta) → data/horário → escolha pagar agora ou após a lavagem → painel operacional → Estou indo → foto ANTES → Iniciar → foto DEPOIS → Finalizar → montagem automática → cliente → grupo.
 
