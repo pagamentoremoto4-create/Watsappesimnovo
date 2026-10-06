@@ -45,6 +45,11 @@ Os arquivos do aplicativo também ficam na raiz do projeto. Assim, a rota `/app-
 
 O aplicativo permite navegar pela agenda, acompanhar a meta diária de quatro carros, avisar que está indo, fotografar antes e depois, iniciar e finalizar a lavagem, gerar a montagem, falar com o cliente, editar o nome e confirmar pagamentos recebidos. As chaves, integrações, grupos e demais configurações administrativas não aparecem no aplicativo.
 
+## APKs Android
+O diretório `android-apps` contém dois projetos Android separados: **Harmony Administrador** e **Harmony André**. O fluxo `.github/workflows/build-android-apks.yml` compila os dois automaticamente no GitHub Actions e disponibiliza o pacote `Harmony-Android-APKs` com os arquivos `Harmony-Administrador.apk` e `Harmony-Andre.apk`.
+
+O APK administrativo abre `/admin` e mantém a autenticação do painel. O APK do André abre `/app-andre`, salva o link operacional no aparelho e não mostra as configurações administrativas. Ambos aceitam câmera e galeria para envio de fotos.
+
 ## Serviços
 - Express — R$ 70 — Inclui lavagem completa, aspiração detalhada e acabamento dos pneus.
 - Premium — R$ 100 — Inclui tudo da Express + cera líquida e aplicação de produto no painel e plásticos internos.
