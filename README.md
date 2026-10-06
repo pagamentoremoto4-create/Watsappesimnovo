@@ -38,6 +38,11 @@ Cliente no WhatsApp → menu → serviço → cadastro (nome obtido automaticame
 ## Horários padrão
 08:00, 09:45, 14:00, 15:45. Meta de 4 carros/dia. Cada lavagem reserva 1h30 + 15min de intervalo; almoço bloqueado das 11:30 às 14:00.
 
+## Aplicativo Android do André
+O painel administrativo possui a área **Aplicativo do André**, com um link individual de instalação. Abra o link no Chrome do Android e use **Instalar** ou **Adicionar à tela inicial**. O aplicativo funciona em tela cheia e mantém o acesso salvo somente naquele aparelho.
+
+O aplicativo permite navegar pela agenda, acompanhar a meta diária de quatro carros, avisar que está indo, fotografar antes e depois, iniciar e finalizar a lavagem, gerar a montagem, falar com o cliente, editar o nome e confirmar pagamentos recebidos. As chaves, integrações, grupos e demais configurações administrativas não aparecem no aplicativo.
+
 ## Serviços
 - Express — R$ 70 — Inclui lavagem completa, aspiração detalhada e acabamento dos pneus.
 - Premium — R$ 100 — Inclui tudo da Express + cera líquida e aplicação de produto no painel e plásticos internos.
