@@ -3,7 +3,11 @@
 Projeto independente em Node 20, Express, SQLite, Baileys, Mercado Pago, Multer, Sharp e Socket.IO.
 
 ## Fluxo
-Cliente no WhatsApp → menu → serviço → cadastro (nome, casa, modelo, cor) → data/horário → escolha pagar agora ou após a lavagem → painel operacional → Estou indo → foto ANTES → Iniciar → foto DEPOIS → Finalizar → montagem automática → cliente → grupo.
+Cliente no WhatsApp → menu → serviço → cadastro (nome obtido automaticamente do perfil, casa, modelo, cor) → data/horário → escolha pagar agora ou após a lavagem → painel operacional → Estou indo → foto ANTES → Iniciar → foto DEPOIS → Finalizar → montagem automática → cliente → grupo.
+
+- O nome é capturado automaticamente do perfil do WhatsApp. Se o WhatsApp não fornecer um nome, o bot pergunta ao cliente como alternativa de segurança.
+- O nome aparece no painel administrativo e no painel operacional. O administrador pode definir manualmente o nome que o bot deve usar; essa escolha tem prioridade sobre o perfil do WhatsApp.
+- Na escolha da data, o cliente pode selecionar Hoje, Amanhã ou Outra data no formato DD/MM/AAAA.
 
 - **Pagar agora:** o horário fica reservado por 10 minutos. Sem confirmação, a reserva é cancelada e o horário é liberado.
 - **Pagar após a lavagem:** o agendamento é confirmado imediatamente; ao finalizar, o PIX é criado e enviado ao cliente.
@@ -13,10 +17,9 @@ Cliente no WhatsApp → menu → serviço → cadastro (nome, casa, modelo, cor)
 ## Horários padrão
 07:00, 08:30, 10:00, 13:00, 14:30, 16:00. Máximo 6/dia. Cada slot reserva 1h30.
 
-## Serviços provisórios
-- Express — R$ 35
-- Completa — R$ 55
-- Premium — R$ 80
+## Serviços
+- Express — R$ 70
+- Premium — R$ 100
 
 Os serviços podem ser alterados no banco/API depois; esta versão inicial já os cria automaticamente.
 
