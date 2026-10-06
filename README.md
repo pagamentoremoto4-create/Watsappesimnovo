@@ -15,6 +15,8 @@ Cliente no WhatsApp → menu → serviço → cadastro (nome obtido automaticame
 - No Mercado Pago o PIX é gerado sem documento. Na MisticPay o bot solicita o CPF uma vez, salva no cadastro do cliente e envia o campo obrigatório `payerDocument` ao criar a cobrança.
 - O status da lavagem e o status financeiro são exibidos separadamente.
 - A pergunta de autorização foi removida. A publicação no grupo não inclui nome, casa ou telefone e usa uma versão da montagem com faixa de privacidade na região central inferior das fotos.
+- O cliente recebe a confirmação do agendamento. O WhatsApp do lavador, configurado no painel, recebe um aviso quando o agendamento é confirmado e outro aviso **15 minutos antes** da lavagem.
+- O lembrete de 15 minutos é enviado somente ao lavador, não ao cliente.
 
 ## Horários padrão
 07:00, 08:30, 10:00, 13:00, 14:30, 16:00. Máximo 6/dia. Cada slot reserva 1h30.
@@ -31,7 +33,7 @@ Os serviços podem ser alterados no banco/API depois; esta versão inicial já o
 3. Adicione Persistent Disk em `/data`.
 4. Configure apenas `DATA_DIR=/data`.
 5. Abra `/admin` e crie a senha no primeiro acesso.
-6. No painel, cadastre o Access Token do Mercado Pago e/ou Client ID + Client Secret da MisticPay, selecione o gateway ativo, informe o endereço público e o número do WhatsApp.
+6. No painel, cadastre o Access Token do Mercado Pago e/ou Client ID + Client Secret da MisticPay, selecione o gateway ativo, informe o endereço público, o número público e o WhatsApp do lavador com DDI e DDD.
 7. Conecte o WhatsApp pelo QR, atualize a lista de grupos e selecione o grupo do condomínio.
 8. Use o link operacional gerado pelo próprio painel no celular do operador.
 
@@ -54,8 +56,18 @@ O sistema publica:
 
 Os anúncios consultam a agenda antes de informar horários. Cada envio fica registrado no SQLite para não ser duplicado após reinício do Render.
 
+O pacote inclui cinco fotos para os anúncios diários. A mesma foto é usada nos envios das 07h e 12h de um dia; no dia seguinte o sistema passa para a próxima, voltando à primeira depois da quinta. Quando houver campanha sazonal ativa, a foto da campanha substitui a foto diária.
+
+## Fotos do menu e dos anúncios
+
+- O menu do WhatsApp alterna automaticamente entre cinco fotos.
+- O painel `/admin` exibe as cinco fotos do menu e as cinco fotos dos anúncios diários.
+- Qualquer posição pode ser substituída no painel por arquivo JPEG, PNG ou WebP.
+- As imagens enviadas pelo painel são ajustadas automaticamente para 1080 × 1080 pixels.
+- As fotos personalizadas ficam no disco persistente e não são sobrescritas em novas inicializações.
+
 ## Calendário anual
 
-O painel `/admin` permite ativar, pausar e editar os textos das campanhas. Datas fixas e móveis são recalculadas automaticamente a cada ano: Ano-Novo, Carnaval, Páscoa, Dia das Mães, Dia dos Namorados, São João, férias de julho, Dia dos Pais, Primavera, Dia das Crianças, Black Friday, Natal e Réveillon.
+O painel `/admin` permite ativar, pausar, editar o texto e trocar a foto de cada campanha. Datas fixas e móveis são recalculadas automaticamente a cada ano: Ano-Novo, Carnaval, Páscoa, Dia das Mães, Dia dos Namorados, São João, férias de julho, Dia dos Pais, Primavera, Dia das Crianças, Black Friday, Natal e Réveillon.
 
-Para usar uma imagem própria em uma campanha, coloque o arquivo dentro de `/data/campanhas` e informe o nome do arquivo no banco/campo `imagem`. Sem imagem, o anúncio é enviado normalmente como texto.
+As 13 campanhas já começam com uma arte própria. As fotos trocadas no painel ficam armazenadas no disco persistente configurado em `DATA_DIR`.
