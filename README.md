@@ -12,7 +12,7 @@ Cliente no WhatsApp → menu → serviço → cadastro (nome obtido automaticame
 - **Pagar agora:** o horário fica reservado por 10 minutos. Sem confirmação, a reserva é cancelada e o horário é liberado.
 - **Pagar após a lavagem:** o agendamento é confirmado imediatamente; ao finalizar, o PIX é criado e enviado ao cliente.
 - O painel permite cadastrar Mercado Pago e MisticPay e escolher qual gateway PIX ficará ativo.
-- No Mercado Pago o PIX é gerado sem documento. Na MisticPay esta versão também não pergunta CPF, conforme o fluxo solicitado; como a documentação pública marca `payerDocument` como obrigatório e não existe sandbox, valide a primeira cobrança com valor baixo.
+- No Mercado Pago o PIX é gerado sem documento. Na MisticPay o bot solicita o CPF uma vez, salva no cadastro do cliente e envia o campo obrigatório `payerDocument` ao criar a cobrança.
 - O status da lavagem e o status financeiro são exibidos separadamente.
 - A pergunta de autorização foi removida. A publicação no grupo não inclui nome, casa ou telefone e usa uma versão da montagem com faixa de privacidade na região central inferior das fotos.
 
