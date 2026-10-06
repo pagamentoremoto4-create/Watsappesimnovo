@@ -16,7 +16,7 @@ As chaves e os modelos são configurados no painel e ficam criptografados no ban
 
 A IA entende mensagens naturais e coleta serviço, casa, veículo, data, horário e forma de pagamento. O código continua sendo a autoridade para preços, disponibilidade, criação da reserva, cobrança PIX e confirmação do pagamento. A IA nunca confirma diretamente uma cobrança.
 
-Modelos iniciais sugeridos no painel: `gpt-5.6-luna` e `gemini-3.8-flash`. Os dois campos são editáveis para permitir futuras atualizações sem alterar o código.
+Modelos iniciais sugeridos no painel: `gpt-5-mini` e `gemini-3.5-flash-lite`. Os dois campos são editáveis para permitir futuras atualizações sem alterar o código.
 
 ## Fluxo
 Cliente no WhatsApp → menu → serviço → cadastro (nome obtido automaticamente do perfil, casa, modelo e cor em uma única pergunta) → data/horário → escolha pagar agora ou após a lavagem → painel operacional → Estou indo → foto ANTES → Iniciar → foto DEPOIS → Finalizar → montagem automática → cliente → grupo.
@@ -26,12 +26,13 @@ Cliente no WhatsApp → menu → serviço → cadastro (nome obtido automaticame
 - Na escolha da data, o cliente pode selecionar Hoje, Amanhã ou Outra data no formato DD/MM/AAAA.
 
 - **Pagar agora:** o horário fica reservado por 10 minutos. Sem confirmação, a reserva é cancelada e o horário é liberado.
-- **Pagar após a lavagem:** o agendamento é confirmado imediatamente; ao finalizar, o PIX é criado e enviado ao cliente.
+- **Pagar após a lavagem:** o agendamento é gravado como confirmado; ao finalizar, as fotos são enviadas, o PIX é criado e enviado ao cliente. Após a confirmação do pagamento, o cliente recebe agradecimento e pedido de avaliação.
 - O painel permite cadastrar Mercado Pago e MisticPay e escolher qual gateway PIX ficará ativo.
 - No Mercado Pago o PIX é gerado sem documento. Na MisticPay o bot solicita o CPF uma vez, salva no cadastro do cliente e envia o campo obrigatório `payerDocument` ao criar a cobrança.
 - O status da lavagem e o status financeiro são exibidos separadamente.
 - A pergunta de autorização foi removida. A publicação no grupo não inclui nome, casa ou telefone e usa uma versão da montagem com faixa de privacidade na região central inferior das fotos.
-- O cliente recebe a confirmação do agendamento. O WhatsApp do lavador, configurado no painel, recebe um aviso quando o agendamento é confirmado e outro aviso **15 minutos antes** da lavagem.
+- O cliente recebe a confirmação somente depois que o banco grava a reserva. O WhatsApp do lavador, configurado no painel operacional, recebe um aviso quando o agendamento é confirmado e outro aviso **15 minutos antes** da lavagem.
+- A assistente usa o tom próximo do André e dos vizinhos, mas nunca se apresenta como uma pessoa humana. O histórico recente de serviços, veículos, casas e avaliações é enviado à IA para personalização; preços, agenda, pagamento e confirmação continuam sob controle do código.
 - O lembrete de 15 minutos é enviado somente ao lavador, não ao cliente.
 
 ## Horários padrão
