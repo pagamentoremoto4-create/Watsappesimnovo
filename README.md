@@ -36,7 +36,7 @@ Cliente no WhatsApp → menu → serviço → cadastro (nome obtido automaticame
 - O lembrete de 15 minutos é enviado somente ao lavador, não ao cliente.
 
 ## Horários padrão
-07:00, 08:30, 10:00, 13:00, 14:30, 16:00. Máximo 6/dia. Cada slot reserva 1h30.
+08:00, 09:45, 14:00, 15:45. Meta de 4 carros/dia. Cada lavagem reserva 1h30 + 15min de intervalo; almoço bloqueado das 11:30 às 14:00.
 
 ## Serviços
 - Express — R$ 70

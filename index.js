@@ -7,7 +7,9 @@ const PORT=Number(process.env.PORT||3000), DATA_DIR=process.env.DATA_DIR||path.j
 for(const p of [DATA_DIR,UP,path.join(UP,'antes'),path.join(UP,'depois'),path.join(UP,'montagens'),MEDIA_DIR,MENU_DIR,AD_DIR,CAMPAIGN_DIR,SESSION]) fs.mkdirSync(p,{recursive:true});
 const db=new sqlite3.Database(path.join(DATA_DIR,'harmony.sqlite'));
 const run=(sql,p=[])=>new Promise((res,rej)=>db.run(sql,p,function(e){e?rej(e):res(this)})); const get=(sql,p=[])=>new Promise((res,rej)=>db.get(sql,p,(e,r)=>e?rej(e):res(r))); const all=(sql,p=[])=>new Promise((res,rej)=>db.all(sql,p,(e,r)=>e?rej(e):res(r)));
-const slots=['07:00','08:30','10:00','13:00','14:30','16:00'];
+// Agenda operacional: quatro lavagens por dia, 1h30 de serviço + 15min de intervalo.
+// Almoço bloqueado das 11:30 às 14:00.
+const slots=['08:00','09:45','14:00','15:45'];
 const TZ='America/Bahia', PAY_NOW='pix_agora', PAY_AFTER='pix_depois';
 let sock=null, connected=false, qrData='', waStatus='AGUARDANDO_ACAO', waError='', waStarting=false, waGeneration=0, waReconnectTimer=null;
 let settings={};
