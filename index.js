@@ -40,14 +40,14 @@ const CAMPAIGNS=[
  {id:'reveillon',nome:'Réveillon',dias:6,texto:'🎆 Entre no ano novo com o carro limpo e renovado. Últimos horários de dezembro.'}
 ];
 async function ensureColumn(table,column,definition){const cols=await all(`PRAGMA table_info(${table})`);if(!cols.some(x=>x.name===column))await run(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)}
-function seedFile(source,destination){if(!fs.existsSync(destination)&&fs.existsSync(source))fs.copyFileSync(source,destination)}
+function seedFile(sources,destination){if(fs.existsSync(destination))return false;for(const source of [].concat(sources)){if(fs.existsSync(source)){fs.copyFileSync(source,destination);console.log(`🖼️ FOTO INSTALADA: ${path.basename(destination)}`);return true}}console.log(`⚠️ FOTO NÃO ENCONTRADA: ${path.basename(destination)}`);return false}
 function seedMedia(){
  for(let i=1;i<=5;i++){
   const slot=String(i).padStart(2,'0');
-  seedFile(path.join(SEED_DIR,'menu',`menu-${slot}.jpg`),path.join(MENU_DIR,`menu-${slot}.jpg`));
-  seedFile(path.join(SEED_DIR,'anuncios',`anuncio-${slot}.jpg`),path.join(AD_DIR,`anuncio-${slot}.jpg`));
+  seedFile([path.join(__dirname,`menu-${slot}.jpg`),path.join(SEED_DIR,'menu',`menu-${slot}.jpg`)],path.join(MENU_DIR,`menu-${slot}.jpg`));
+  seedFile([path.join(__dirname,`anuncio-${slot}.jpg`),path.join(SEED_DIR,'anuncios',`anuncio-${slot}.jpg`)],path.join(AD_DIR,`anuncio-${slot}.jpg`));
  }
- for(const c of CAMPAIGNS)seedFile(path.join(SEED_DIR,'campanhas',`${c.id}.jpg`),path.join(CAMPAIGN_DIR,`${c.id}.jpg`));
+ for(const c of CAMPAIGNS)seedFile([path.join(__dirname,`campanha-${c.id}.jpg`),path.join(SEED_DIR,'campanhas',`${c.id}.jpg`)],path.join(CAMPAIGN_DIR,`${c.id}.jpg`));
 }
 async function init(){
  await run(`CREATE TABLE IF NOT EXISTS clientes(id INTEGER PRIMARY KEY AUTOINCREMENT, whatsapp TEXT UNIQUE, nome TEXT, casa TEXT, documento TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)`);

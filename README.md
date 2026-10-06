@@ -2,6 +2,8 @@
 
 Projeto independente em Node 20, Express, SQLite, Baileys, Mercado Pago, Multer, Sharp e Socket.IO.
 
+Esta versão inclui também as 23 imagens na raiz do projeto. Isso evita imagens ausentes quando o projeto é enviado ao GitHub sem preservar as subpastas. No primeiro início, o sistema copia automaticamente todas as imagens que estiverem faltando para o disco persistente e registra cada instalação no log do Render.
+
 ## Fluxo
 Cliente no WhatsApp → menu → serviço → cadastro (nome obtido automaticamente do perfil, casa, modelo e cor em uma única pergunta) → data/horário → escolha pagar agora ou após a lavagem → painel operacional → Estou indo → foto ANTES → Iniciar → foto DEPOIS → Finalizar → montagem automática → cliente → grupo.
 
