@@ -1,0 +1,19 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'com.harmonycarwash.andre'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.harmonycarwash.andre'
+        minSdk 24
+        targetSdk 35
+        versionCode 1
+        versionName '1.0.0'
+        buildConfigField 'String', 'START_URL', '"https://watsappesimnovo.onrender.com/app-andre"'
+    }
+
+    buildFeatures { buildConfig true }
+}
+
+dependencies { implementation 'androidx.core:core:1.15.0' }
