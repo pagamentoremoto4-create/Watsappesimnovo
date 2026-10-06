@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Harmony Operação</title>
+  <style>
+    body{font-family:system-ui;background:#f4f7fb;margin:0;color:#10233f}.top{background:#102b4e;color:#fff;padding:20px}.wrap{max-width:700px;margin:auto;padding:16px}.card{background:#fff;border-radius:18px;padding:18px;margin:14px 0;box-shadow:0 5px 20px #0001}.time{font-size:28px;font-weight:800}.house{font-size:24px;font-weight:800}.btn{width:100%;padding:14px;margin-top:9px;border:0;border-radius:12px;font-weight:800;font-size:16px}.btn:disabled{opacity:.42}.primary{background:#16a6a1;color:#fff}.dark{background:#102b4e;color:#fff}.photo{background:#e8eef7}.done{background:#0f8b5f;color:#fff}.tag{display:inline-block;padding:5px 9px;background:#e9f7f5;border-radius:10px}.goal{font-size:22px;font-weight:800}
+  </style>
+</head>
+<body>
+  <div class="top"><b>🚗 HARMONY CAR WASH</b><div>Painel Operacional</div></div>
+  <div class="wrap"><div id="goal" class="card goal"></div><div id="list"></div></div>
+  <script>
+    const token=new URLSearchParams(location.search).get('token');
+    const pay=x=>x.pagamento_status==='paid'?'✅ PAGO':x.forma_pagamento==='pix_depois'?'🕒 PAGAR APÓS O SERVIÇO':'⏳ PAGAMENTO PENDENTE';
+    async function load(){
+      const r=await fetch('/api/hoje?token='+encodeURIComponent(token)),a=await r.json();
+      goal.innerHTML=`🎯 META DE HOJE: ${a.filter(x=>x.status==='finalizado').length} / 6<br><small>Agendados: ${a.length}/6</small>`;
+      list.innerHTML=a.map(x=>{
+        const canGo=x.status==='agendado',canPhotoBefore=['indo','lavando'].includes(x.status),canStart=x.status==='indo'&&x.foto_antes,canPhotoAfter=x.status==='lavando',canFinish=x.status==='lavando'&&x.foto_antes&&x.foto_depois;
+        return `<div class="card"><div class="time">⏰ ${x.horario}</div><div class="house">🏠 CASA ${x.casa}</div><p>🚘 ${x.modelo} — ${x.cor}<br>🧽 ${x.servico}<br><span class="tag">${pay(x)}</span> • ${x.status}</p><button class="btn primary" ${canGo?'':'disabled'} onclick="st(${x.id},'indo')">🏠 ESTOU INDO</button><label class="btn photo" style="display:block;text-align:center;opacity:${canPhotoBefore?1:.42}">📸 FOTO ANTES<input hidden type="file" accept="image/jpeg,image/png,image/webp" capture="environment" ${canPhotoBefore?'':'disabled'} onchange="photo(${x.id},'antes',this)"></label><button class="btn dark" ${canStart?'':'disabled'} onclick="st(${x.id},'iniciar')">🚿 INICIAR LAVAGEM</button><label class="btn photo" style="display:block;text-align:center;opacity:${canPhotoAfter?1:.42}">📸 FOTO DEPOIS<input hidden type="file" accept="image/jpeg,image/png,image/webp" capture="environment" ${canPhotoAfter?'':'disabled'} onchange="photo(${x.id},'depois',this)"></label><button class="btn done" ${canFinish?'':'disabled'} onclick="finish(${x.id})">✨ FINALIZAR + MONTAGEM</button></div>`
+      }).join('')||'<div class="card">Nenhum agendamento confirmado hoje.</div>';
+    }
+    async function st(id,status){const r=await fetch(`/api/agendamento/${id}/status?token=${encodeURIComponent(token)}`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({status})});if(!r.ok)alert((await r.json()).error);load()}
+    async function photo(id,t,el){const f=new FormData();f.append('foto',el.files[0]);const r=await fetch(`/api/agendamento/${id}/foto/${t}?token=${encodeURIComponent(token)}`,{method:'POST',body:f});alert(r.ok?'Foto salva ✅':(await r.json()).error||'Erro ao enviar foto');load()}
+    async function finish(id){const r=await fetch(`/api/agendamento/${id}/finalizar?token=${encodeURIComponent(token)}`,{method:'POST'}),j=await r.json();alert(r.ok?'Finalizado! Montagem enviada ✅':j.error);load()}
+    load();setInterval(load,15000);
+  </script>
+</body>
+</html>
