@@ -1,0 +1,15 @@
+{
+  "name": "Harmony Car Wash — André",
+  "short_name": "Harmony André",
+  "description": "Aplicativo operacional das lavagens do Harmony Car Wash",
+  "id": "/app-andre",
+  "start_url": "/app-andre",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#edf2f7",
+  "theme_color": "#0b2442",
+  "icons": [
+    {"src":"/app-andre-icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}
+  ]
+}

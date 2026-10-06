@@ -41,6 +41,8 @@ Cliente no WhatsApp → menu → serviço → cadastro (nome obtido automaticame
 ## Aplicativo Android do André
 O painel administrativo possui a área **Aplicativo do André**, com um link individual de instalação. Abra o link no Chrome do Android e use **Instalar** ou **Adicionar à tela inicial**. O aplicativo funciona em tela cheia e mantém o acesso salvo somente naquele aparelho.
 
+Os arquivos do aplicativo também ficam na raiz do projeto. Assim, a rota `/app-andre` funciona mesmo em repositórios que não utilizam a pasta `public`.
+
 O aplicativo permite navegar pela agenda, acompanhar a meta diária de quatro carros, avisar que está indo, fotografar antes e depois, iniciar e finalizar a lavagem, gerar a montagem, falar com o cliente, editar o nome e confirmar pagamentos recebidos. As chaves, integrações, grupos e demais configurações administrativas não aparecem no aplicativo.
 
 ## Serviços
