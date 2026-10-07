@@ -3273,6 +3273,10 @@ async function abrirCategoriaServicoWhatsApp(from,cliente,opcao){
 async function escolherServicoDaCategoriaWhatsApp(from,cliente,opcao){
   const sess=await carregarSessaoPedido(from); if(!sess?.categoria)return false;
   if(String(opcao)==='0'){
+    if(sess.origemMenu==='blacklist_compacto'){
+      await abrirBlacklistBrazilCompactoWhatsApp(from,cliente);
+      return true;
+    }
     if(sess.origemMenu==='blacklist'){
       await salvarSessaoPedido(from,{etapa:'menu'});
       await enviarMenuServicosWhatsApp(from,cliente);
@@ -4872,6 +4876,12 @@ Digite *menu* para voltar.`);
     return;
   }
 
+  if (sess?.etapa === 'esim_ddd' && (opcao==='0'||lower==='voltar')) {
+    await salvarSessaoPedido(from,{etapa:'esim_escolha'});
+    await enviarListaEsim(from);
+    return;
+  }
+
   if (sess?.etapa === 'esim_ddd' && /^\d+$/.test(opcao)) {
     const ddds = await dddsEsimDisponiveis(sess.plano);
     const escolhido = ddds[Number(opcao)-1];
@@ -4882,6 +4892,11 @@ Digite *menu* para voltar.`);
   }
 
   if (sess?.etapa === 'esim_dispositivo') {
+    if(opcao==='0'||lower==='voltar'){
+      await salvarSessaoPedido(from,{etapa:'esim_ddd',plano:sess.plano});
+      await enviarEscolhaDddEsim(from,sess.plano,cliente.saldo);
+      return;
+    }
     const dispositivo = opcao === '1' ? 'IPHONE' : opcao === '2' ? 'ANDROID' : '';
     if (!dispositivo) { await enviarTexto(from, '❌ Escolha 1 para iPhone ou 2 para Android.'); return; }
     await salvarSessaoPedido(from, { etapa: 'esim_confirmar', plano: sess.plano, dispositivo, ddd: sess.ddd });
@@ -4932,7 +4947,16 @@ ${dispositivo === 'IPHONE' ? '🍎 Aparelho: iPhone' : '🤖 Aparelho: Android'}
     const idx=Math.max(0,Number(sess.dhruIndice||0));
     const campo=campos[idx];
     if(!campo){await apagarSessaoPedido(from);await enviarTexto(from,'❌ Campos do serviço não encontrados. Sincronize novamente a API.');return;}
-    if(String(textoOriginal||'').trim()==='0'){await apagarSessaoPedido(from);await enviarTexto(from,'Digite *menu* para voltar.');return;}
+    if(String(textoOriginal||'').trim()==='0'||lower==='voltar'){
+      const catNome=String(servico.categoria||'');
+      const catLocal=await get('SELECT * FROM servicos_categorias WHERE ativo=1 AND nome=?',[catNome]).catch(()=>null);
+      if(catLocal && ['BLOQUEIO TIM','DESBLOQUEIO TIM'].includes(String(catLocal.nome||'').toUpperCase())){
+        await abrirBlacklistBrazilCompactoWhatsApp(from,cliente);
+      }else{
+        await abrirServicosDesbloqueiosWhatsApp(from,cliente);
+      }
+      return;
+    }
     let valorCampo=String(textoOriginal||'').trim();
     if(campo.required===false && ['pular','skip','-'].includes(valorCampo.toLowerCase())) valorCampo='';
     if(campo.required!==false && !valorCampo){await enviarTexto(from,dhruPromptCampo(campo,idx,campos.length));return;}
@@ -4952,6 +4976,16 @@ ${dispositivo === 'IPHONE' ? '🍎 Aparelho: iPhone' : '🤖 Aparelho: Android'}
   if (sess?.etapa === 'entrada') {
     const servico = await get('SELECT * FROM servicos_catalogo WHERE id=? AND ativo=1', [sess.servicoId]);
     if (!servico) { await apagarSessaoPedido(from); await enviarTexto(from, '❌ Serviço indisponível.'); return; }
+    if(opcao==='0'||lower==='voltar'){
+      const catNome=String(servico.categoria||'');
+      const catLocal=await get('SELECT * FROM servicos_categorias WHERE ativo=1 AND nome=?',[catNome]).catch(()=>null);
+      if(catLocal && ['BLOQUEIO TIM','DESBLOQUEIO TIM'].includes(String(catLocal.nome||'').toUpperCase())){
+        await abrirBlacklistBrazilCompactoWhatsApp(from,cliente);
+      }else{
+        await abrirServicosDesbloqueiosWhatsApp(from,cliente);
+      }
+      return;
+    }
     if(servico.api_provider==='GGSOMA'){await confirmarCompraGgsoma(from,cliente,servico,textoOriginal);return;}
     const validacao = validarEntradaServico(servico, textoOriginal);
     if (!validacao.ok) { await enviarTexto(from, validacao.erro); return; }
@@ -5647,6 +5681,22 @@ async function processarMensagemWhatsApp({ numero, nome, texto, sessaoId=null })
     await iniciarFluxoPagamento(from,{valor_pix:valor,tipo_pix:'SALDO'},cliente,async(m)=>enviarTexto(from,m),true);return;
   }
 
+  // V5.0 GGSOMA — link individual e limpo no WhatsApp.
+  // Ex.: "Comprar Gemini 18M". O fornecedor e IDs internos não aparecem ao cliente.
+  if (/^comprar\s+/i.test(textoOriginal)) {
+    const produtoDireto = await ggsoma.resolvePurchasePhrase(textoOriginal);
+    if (produtoDireto) {
+      const servico = await get(`SELECT * FROM servicos_catalogo WHERE id=? AND ativo=1 AND api_provider='GGSOMA'`, [Number(produtoDireto.catalogo_id)]);
+      if (!servico) {
+        await enviarTexto(from, '⚠️ Esta oferta não está disponível no momento.');
+        return;
+      }
+      await apagarSessaoPedido(from);
+      await iniciarServicoWhatsApp(from, cliente, servico);
+      return;
+    }
+  }
+
   // V4.9.5.1 — MENU GLOBAL PRIORITÁRIO
   // Sempre permite voltar ao início, mesmo quando o cliente ficou preso em hub_menu
   // ou em qualquer outro fluxo estruturado. Também tolera o erro comum "menuu".
@@ -5981,13 +6031,9 @@ ${dhruPromptCampo(fs[0],0,fs.length)}
     return;
   }
 
-  const etapasComVoltarProprio = new Set(['servico_categoria','online_categorias','online_busca','historico_menu','historico_lista','conta_menu','conta_dados','suporte_menu','pix_cadastro_menu']);
-  if (opcao === '0' && sess && sess.etapa !== 'menu' && !etapasComVoltarProprio.has(sess.etapa)) {
-    await apagarSessaoPedido(from);
-    await salvarSessaoPedido(from, { etapa: 'menu' });
-    await enviarMenuServicosWhatsApp(from, cliente);
-    return;
-  }
+  // V5.0.1 VOLTAR HIERÁRQUICO (WhatsApp)
+  // Não existe mais um fallback global que joga qualquer "0" para o menu principal.
+  // Cada etapa trata o VOLTAR retornando somente um nível.
 
   if (sess?.etapa === 'saldo_insuficiente_servico') {
     const opcaoSaldo = normalizarOpcaoSaldoInsuficiente(textoOriginal);
@@ -11637,7 +11683,7 @@ function consultaLoginStatus(){
 
 // Todas as rotas administrativas, inclusive os dados internos e downloads, exigem login.
 app.use('/admin', basicAuth);
-const ggsoma = require('./ggsoma')({run,get,all,getConfig,setConfig,axios,DATA_DIR,addColumnIfMissing,precoDaRevenda,safeHtml,page,clienteAuth,clientePage,finalizarPedido,cancelarPedidoComEstorno,enviarParaCanaisCliente});
+const ggsoma = require('./ggsoma')({run,get,all,getConfig,setConfig,axios,DATA_DIR,addColumnIfMissing,precoDaRevenda,safeHtml,page,clienteAuth,clientePage,finalizarPedido,cancelarPedidoComEstorno,enviarParaCanaisCliente,listWhatsAppGroups:consultaListarGruposWhatsApp,getWhatsAppSalesNumber:async()=>{const s=await sessaoParaAnuncios();return normalizarNumeroWhatsApp(s?.numero||whatsappNumeroConectado||'');},sendWhatsAppGroup:async(grupo,texto,imagePath='')=>{const sock=await consultaObterSocketWhatsApp(grupo);if(!sock)throw new Error('Nenhuma sessão WhatsApp conectada possui o grupo selecionado.');if(imagePath&&fs.existsSync(imagePath))return sock.sendMessage(grupo,{image:fs.readFileSync(imagePath),caption:String(texto)});return sock.sendMessage(grupo,{text:String(texto)});}});
 ggsoma.routes(app);
 
 // GGSOMA compartilhada: a credencial fica somente no Pixgonovo central.
