@@ -1,0 +1,65 @@
+WHATSAPP AQUECIDOS — SOMENTE WHATSAPP CONECTADO
+
+PLANOS
+30 dias aquecidos: R$ 40,00
+120 dias aquecidos: R$ 90,00
+O servidor define o preço pelo plano. O número vem da sessão conectada.
+Não existe preenchimento manual de número, preço, chip ou canal SMS.
+Os dias de aquecimento são informados pelo plano, não medidos pelo sistema.
+
+FLUXO DO ADMINISTRADOR
+1. Conectar WhatsApp > Adicionar WhatsApp.
+2. Dê um nome ao celular e marque Receber códigos.
+3. Conecte a conta pelo QR Code.
+4. Abra WhatsApp aquecidos > Estoque.
+5. Escolha o celular conectado. O número aparece automaticamente.
+6. Escolha 30 dias ou 120 dias; o preço aparece automaticamente.
+7. Cadastre. A sessão, o número, o DDD e o nome do celular são vinculados.
+Somente celulares livres, conectados e com Receber códigos podem ser cadastrados.
+
+FLUXO DO CLIENTE
+Telegram > WhatsApp aquecidos > Comprar por DDD ou Comprar aleatório.
+A confirmação confere disponibilidade, conexão, plano e saldo.
+A venda e o débito são gravados juntos, evitando duas vendas do mesmo número.
+O cliente recebe o número, solicita a ativação no WhatsApp dele e aperta
+Solicitar código no Telegram. A espera dura até dez minutos.
+O bot acompanha mensagens novas da conta conectada e vinculada ao pedido.
+A captura só considera mensagem que mencione WhatsApp e um único código de seis dígitos.
+
+RECEBIMENTO DOS CODIGOS
+Em Recebimento WhatsApp, a lista de remetentes confiáveis começa vazia.
+Na primeira captura, confira em Pedidos e códigos o remetente e o código.
+Aprove a mensagem para enviar ao comprador.
+Depois de verificar a origem, cadastre o JID exato do remetente para entrega automática.
+Não há entrada manual de códigos nem entrada por SMS nesta versão.
+A captura real depende de a mensagem de ativação estar acessível à conexão.
+Mensagens internas do WhatsApp podem não aparecer no Baileys.
+
+MIGRACAO DA VERSAO ANTERIOR
+- Retirada a integração SMS e o projeto Android.
+- Removidas as rotas e a tela dos celulares/SMS.
+- Credenciais SMS antigas são desativadas na inicialização.
+- Histórico de pedidos e banco existentes são preservados.
+- Códigos SMS antigos ainda em revisão ficam ignorados.
+- Estoque não vendido de 30/120 dias recebe os preços de R$ 40/R$ 90.
+- Cadastros disponíveis de outros planos, sem vínculo ou sem Receber códigos
+  ficam pausados; edite o cadastro escolhendo uma conta e um dos dois planos.
+- Números vendidos não voltam automaticamente ao estoque.
+- Uma conta que se desconectar deixa de ser ofertada no Telegram até reconectar.
+
+ATUALIZAR NO RENDER
+Faça backup do banco/disco. Atualize o projeto no repositório e faça o deploy.
+Mantenha as variáveis e o disco persistente existentes.
+Não é necessário instalar aplicativo de SMS ou compilar APK.
+Depois do deploy, teste cadastro e um pedido completo com uma conta sua.
+O deploy e o teste com conta real não foram executados neste ambiente.
+
+TESTES LOCAIS
+Requer Node.js e Python 3 apenas para o teste:
+node test/whatsapp-aquecidos.test.js
+Valida cadastro automático, preços, duas opções, conexão, função Receber códigos,
+concorrência, saldo, captura exclusiva WhatsApp, revisão, entrega, estorno e migração.
+
+
+CAPTURA ANDROID (NOVA OPÇÃO)
+Aba Captura Android adicionada ao painel. Código-fonte do aplicativo em android-captura. Leia android-captura/INSTRUCOES.txt. As referências anteriores a captura somente por mensagem descrevem a versão antiga. Agora são aceitas mensagens e capturas do aplicativo vinculado. Continua sem SMS. O APK ainda precisa ser compilado e o OCR validado no aparelho; não ative entrega automática antes do teste real.
