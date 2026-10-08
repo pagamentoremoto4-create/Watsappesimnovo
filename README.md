@@ -28,7 +28,7 @@ Cliente no WhatsApp → menu → serviço → cadastro (nome obtido automaticame
 - **Pagar agora:** o horário fica reservado por 10 minutos. Sem confirmação, a reserva é cancelada e o horário é liberado.
 - **Pagar após a lavagem:** o agendamento é gravado como confirmado; ao finalizar, as fotos são enviadas, o PIX é criado e enviado ao cliente. Após a confirmação do pagamento, o cliente recebe agradecimento e pedido de avaliação.
 - O painel permite cadastrar Mercado Pago e MisticPay e escolher qual gateway PIX ficará ativo.
-- No Mercado Pago o PIX é gerado sem documento. Na MisticPay o bot solicita o CPF uma vez, salva no cadastro do cliente e envia o campo obrigatório `payerDocument` ao criar a cobrança.
+- No Mercado Pago o PIX é gerado sem documento. Na MisticPay é usado o CPF fixo configurado no painel, sem solicitar documento aos clientes.
 - O status da lavagem e o status financeiro são exibidos separadamente.
 - A pergunta de autorização foi removida. A publicação no grupo não inclui nome, casa ou telefone e usa uma versão da montagem com faixa de privacidade na região central inferior das fotos.
 - O cliente recebe a confirmação somente depois que o banco grava a reserva. O WhatsApp do lavador, configurado no painel operacional, recebe um aviso quando o agendamento é confirmado e outro aviso **15 minutos antes** da lavagem.
@@ -64,7 +64,7 @@ Nome, preço e descrição dos serviços podem ser alterados na área **Serviço
 
 ## Render
 1. Crie um novo Web Service para este projeto.
-2. Runtime Node, Build Command: `npm install`, Start Command: `npm start`.
+2. Runtime Node, Build Command: `npm ci`, Start Command: `npm start`.
 3. Adicione Persistent Disk em `/data`.
 4. Configure apenas `DATA_DIR=/data`.
 5. Abra `/admin` e crie a senha no primeiro acesso.
@@ -77,7 +77,7 @@ Nome, preço e descrição dos serviços podem ser alterados na área **Serviço
 - **Mercado Pago:** cria cobranças em `/v1/payments`, consulta `/v1/payments/{id}` e recebe notificações em `/api/webhooks/mercadopago`.
 - **MisticPay:** cria cobranças em `/api/transactions/create`, consulta `/api/transactions/check` e recebe notificações em `/api/webhooks/misticpay`.
 - O gateway escolhido fica salvo em cada agendamento. Trocar o gateway no painel não altera cobranças que já foram criadas.
-- O cliente recebe o Pix Copia e Cola e a confirmação é feita por consulta automática e webhook.
+- O cliente recebe o QR Code em imagem e o Pix Copia e Cola separado. A confirmação é feita por consulta automática e webhook.
 
 ## Grupo
 O número conectado precisa participar do grupo e ter permissão para enviar mensagens. A seleção do grupo e a ativação dos anúncios são feitas no painel.

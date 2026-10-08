@@ -1,15 +1,17 @@
 services:
   - type: web
-    name: centralunlocker-v14-ia
+    name: harmony-car-wash
     runtime: node
     plan: free
-    buildCommand: npm install --no-audit --no-fund --verbose
+    buildCommand: npm ci --no-audit --no-fund
     startCommand: npm start
     healthCheckPath: /health
     autoDeploy: true
     envVars:
       - key: NODE_VERSION
         value: 20
+      - key: DATA_DIR
+        value: /data
       - key: IA_ENABLED
         value: "true"
       - key: OPENAI_MODEL

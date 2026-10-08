@@ -1,0 +1,16 @@
+HARMONY CAR WASH V10 — CORREÇÕES
+
+- QR Code PIX enviado como imagem no WhatsApp.
+- Pix Copia e Cola enviado em mensagem separada.
+- Remoção segura do prefixo http:// ou https:// antes de códigos 000201.
+- Validação para impedir links comuns no campo Pix Copia e Cola.
+- Imagem oficial do QR Code da MisticPay, com geração local de segurança.
+- Registro no log quando a consulta de pagamento falhar.
+- Aviso real ao WhatsApp de André quando o cliente pedir atendimento.
+- Pasta public restaurada com painel, aplicativo e arquivos necessários.
+- Ícones Android/PWA de 192 e 512 pixels restaurados.
+- Página principal redireciona automaticamente para /admin.
+- Build do Render padronizado com npm ci e DATA_DIR=/data.
+
+Horários preservados: 08:00, 09:45, 14:00 e 15:45.
+Fluxos, anúncios, grupos, IA, serviços e aplicativos foram preservados.

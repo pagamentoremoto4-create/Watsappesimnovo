@@ -2,4 +2,9 @@ node_modules/
 .env
 npm-debug.log*
 auth_info_baileys/
+data/
+whatsapp-session/
+*.sqlite
+*.sqlite-journal
+*.db
 *.db-journal
